@@ -1,0 +1,283 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-sans: 'Plus Jakarta Sans', 'IBM Plex Sans Thai', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'IBM Plex Mono', monospace;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: #F8FAFC;
+    color: #0F172A;
+    margin: 0;
+    padding: 0;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Exact Excel Sheet Table Styling matching the user's attached image */
+.excel-sheet-table {
+  border-collapse: collapse;
+  border: 1px solid #000000;
+  background-color: #FFFFFF;
+  font-family: 'Calibri', 'Plus Jakarta Sans', 'IBM Plex Sans Thai', sans-serif;
+  user-select: all;
+}
+
+.excel-sheet-table th,
+.excel-sheet-table td {
+  border: 1px solid #000000;
+}
+
+.excel-header-cell {
+  background-color: #FFFF99;
+  color: #0000FF;
+  font-weight: 700;
+  text-align: center;
+  vertical-align: middle;
+  position: relative;
+}
+
+/* Red Excel comment indicator triangle in top-right corner of Fuel price B10 PTT */
+.excel-comment-indicator::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 0;
+  height: 0;
+  border-left: 7px solid transparent;
+  border-top: 7px solid #FF0000;
+}
+
+/* Official Sign in with Google button styles */
+.gsi-material-button {
+  -moz-user-select: none;
+  -webkit-user-select: none;
+  -ms-user-select: none;
+  -webkit-appearance: none;
+  background-color: #FFFFFF;
+  background-image: none;
+  border: 1px solid #747775;
+  -webkit-border-radius: 6px;
+  border-radius: 6px;
+  -webkit-box-sizing: border-box;
+  box-sizing: border-box;
+  color: #1f1f1f;
+  cursor: pointer;
+  font-family: 'Roboto', 'Plus Jakarta Sans', arial, sans-serif;
+  font-size: 13px;
+  height: 36px;
+  letter-spacing: 0.25px;
+  outline: none;
+  overflow: hidden;
+  padding: 0 12px;
+  position: relative;
+  text-align: center;
+  -webkit-transition: background-color 0.218s, border-color 0.218s, box-shadow 0.218s;
+  transition: background-color 0.218s, border-color 0.218s, box-shadow 0.218s;
+  vertical-align: middle;
+  white-space: nowrap;
+  width: auto;
+  max-width: 400px;
+  min-width: min-content;
+}
+
+.gsi-material-button .gsi-material-button-icon {
+  height: 18px;
+  margin-right: 10px;
+  min-width: 18px;
+  width: 18px;
+}
+
+.gsi-material-button .gsi-material-button-content-wrapper {
+  -webkit-align-items: center;
+  align-items: center;
+  display: flex;
+  -webkit-flex-direction: row;
+  flex-direction: row;
+  -webkit-flex-wrap: nowrap;
+  flex-wrap: nowrap;
+  height: 100%;
+  justify-content: space-between;
+  position: relative;
+  width: 100%;
+}
+
+.gsi-material-button .gsi-material-button-contents {
+  -webkit-flex-grow: 1;
+  flex-grow: 1;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: top;
+}
+
+.gsi-material-button .gsi-material-button-state {
+  -webkit-transition: opacity 0.218s;
+  transition: opacity 0.218s;
+  bottom: 0;
+  left: 0;
+  opacity: 0;
+  position: absolute;
+  right: 0;
+  top: 0;
+}
+
+.gsi-material-button:disabled {
+  cursor: default;
+  background-color: #ffffff61;
+  border-color: #1f1f1f1f;
+}
+
+.gsi-material-button:not(:disabled):hover {
+  -webkit-box-shadow: 0 1px 2px 0 rgba(60, 64, 67, 0.3), 0 1px 3px 1px rgba(60, 64, 67, 0.15);
+  box-shadow: 0 1px 2px 0 rgba(60, 64, 67, 0.3), 0 1px 3px 1px rgba(60, 64, 67, 0.15);
+  background-color: #f8fafd;
+}
+
+@keyframes driveRightWithRefuel {
+  0% {
+    transform: translateX(-140px);
+  }
+  28% {
+    transform: translateX(calc(30cqw - 55px));
+  }
+  33% {
+    transform: translateX(calc(30cqw - 38px));
+  }
+  /* Stopped at PTT Gas Station to refuel */
+  53% {
+    transform: translateX(calc(30cqw - 38px));
+  }
+  59% {
+    transform: translateX(calc(30cqw + 25px));
+  }
+  100% {
+    transform: translateX(calc(100cqw + 140px));
+  }
+}
+
+@keyframes driveLeftWithCharge {
+  0% {
+    transform: translateX(calc(100cqw + 140px));
+  }
+  28% {
+    transform: translateX(calc(70cqw + 55px));
+  }
+  33% {
+    transform: translateX(calc(70cqw + 38px));
+  }
+  /* Stopped at EV Charging Station to charge */
+  53% {
+    transform: translateX(calc(70cqw + 38px));
+  }
+  59% {
+    transform: translateX(calc(70cqw - 25px));
+  }
+  100% {
+    transform: translateX(-140px);
+  }
+}
+
+@keyframes refuelStatusPulse {
+  0%, 31% {
+    opacity: 0;
+    transform: translateY(4px) scale(0.85);
+    visibility: hidden;
+  }
+  34%, 51% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    visibility: visible;
+  }
+  55%, 100% {
+    opacity: 0;
+    transform: translateY(-2px) scale(0.9);
+    visibility: hidden;
+  }
+}
+
+@keyframes chargeStatusPulse {
+  0%, 31% {
+    opacity: 0;
+    transform: translateY(4px) scale(0.85);
+    visibility: hidden;
+  }
+  34%, 51% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    visibility: visible;
+  }
+  55%, 100% {
+    opacity: 0;
+    transform: translateY(-2px) scale(0.9);
+    visibility: hidden;
+  }
+}
+
+@keyframes truckBounce {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-0.8px);
+  }
+}
+
+@keyframes stationSignGlow {
+  0%, 100% {
+    filter: drop-shadow(0 0 2px rgba(6, 182, 212, 0.4));
+  }
+  50% {
+    filter: drop-shadow(0 0 8px rgba(6, 182, 212, 0.85));
+  }
+}
+
+.highway-track {
+  container-type: inline-size;
+}
+
+.truck-drive-right {
+  animation: driveRightWithRefuel 14s ease-in-out infinite;
+}
+
+.truck-drive-left {
+  animation: driveLeftWithCharge 13s ease-in-out infinite;
+}
+
+.refuel-badge-anim {
+  animation: refuelStatusPulse 14s ease-in-out infinite;
+}
+
+.charge-badge-anim {
+  animation: chargeStatusPulse 13s ease-in-out infinite;
+}
+
+.station-glow {
+  animation: stationSignGlow 2.5s ease-in-out infinite;
+}
+
+.truck-body-bounce {
+  animation: truckBounce 0.45s ease-in-out infinite;
+}
+
+@media print {
+  body {
+    background: #FFFFFF !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .print-only-sheet {
+    box-shadow: none !important;
+    border: none !important;
+    padding: 0 !important;
+    margin: 0 auto !important;
+  }
+}

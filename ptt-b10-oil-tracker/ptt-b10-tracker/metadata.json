@@ -1,0 +1,6 @@
+{
+  "name": "PTT B10 Fuel & EV Price Sheet",
+  "description": "Real-time daily PTT Diesel B10 and EV price tracker and spreadsheet formatter synced directly from http://www.pttor.com/oilprice-board.aspx",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

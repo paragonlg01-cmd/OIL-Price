@@ -1,0 +1,64 @@
+{
+  "entities": {
+    "SharedBoardState": {
+      "title": "SharedBoardState",
+      "description": "Shared real-time PTT B10 and EV price configuration across devices",
+      "type": "object",
+      "properties": {
+        "stateId": {
+          "type": "string",
+          "description": "Document identifier (e.g., main)",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "defaultEvPrice": {
+          "type": "string",
+          "description": "Default EV price formatted to 2 decimal places",
+          "maxLength": 16,
+          "pattern": "^[0-9]+(\\.[0-9]{1,2})?$"
+        },
+        "selectedYear": {
+          "type": "number",
+          "description": "Selected calendar year"
+        },
+        "selectedMonth": {
+          "type": "number",
+          "description": "Selected calendar month (1-12)"
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "UID of the creator or updater",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp"
+        }
+      },
+      "required": [
+        "stateId",
+        "defaultEvPrice",
+        "selectedYear",
+        "selectedMonth",
+        "ownerId",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/sharedBoardState/{stateId}": {
+      "schema": {
+        "$ref": "#/entities/SharedBoardState"
+      },
+      "description": "Real-time shared board state document"
+    }
+  }
+}
