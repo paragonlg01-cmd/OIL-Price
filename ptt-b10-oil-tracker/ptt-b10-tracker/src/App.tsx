@@ -528,6 +528,7 @@ export default function App() {
 
   const [isDownloadingZip, setIsDownloadingZip] = useState(false);
   const [copiedAppCode, setCopiedAppCode] = useState(false);
+  const [copiedEmailManagerCode, setCopiedEmailManagerCode] = useState(false);
 
   const handleDownloadZip = async () => {
     try {
@@ -574,6 +575,19 @@ export default function App() {
     }
   };
 
+  const handleCopyEmailManagerTsx = async () => {
+    try {
+      const res = await fetch('/api/download-email-manager-tsx');
+      if (!res.ok) return;
+      const text = await res.text();
+      await navigator.clipboard.writeText(text);
+      setCopiedEmailManagerCode(true);
+      setTimeout(() => setCopiedEmailManagerCode(false), 4000);
+    } catch {
+      // ignore
+    }
+  };
+
   const hasOverrides = Object.keys(customOverrides).length > 0;
 
   return (
@@ -600,7 +614,26 @@ export default function App() {
           </span>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+          <button
+            type="button"
+            onClick={handleCopyEmailManagerTsx}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-indigo-800 bg-indigo-50 hover:bg-indigo-100 border border-indigo-300 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            title="คัดลอกโค้ด src/components/EmailAlertManager.tsx (ประวัติการส่งตามเดือน) ไปวางใน GitHub"
+          >
+            {copiedEmailManagerCode ? (
+              <>
+                <Check className="w-3.5 h-3.5 text-emerald-600" />
+                <span className="text-emerald-700">คัดลอก EmailAlertManager.tsx แล้ว!</span>
+              </>
+            ) : (
+              <>
+                <Copy className="w-3.5 h-3.5 text-indigo-700" />
+                <span>คัดลอกโค้ดประวัติส่งตามเดือน (วางใน GitHub)</span>
+              </>
+            )}
+          </button>
+
           <button
             type="button"
             onClick={handleCopyAppTsx}
