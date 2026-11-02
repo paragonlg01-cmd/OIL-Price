@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Check,
   Copy,
@@ -87,9 +87,39 @@ const THAI_MONTHS = [
   { value: 12, label: 'ธันวาคม (12)' },
 ];
 
+function getThailandCurrentDateInfo(): { year: number; month: number; isoDate: string } {
+  try {
+    const isoDate = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Bangkok',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
+    const [y, m] = isoDate.split('-').map(Number);
+    if (y && m) {
+      return { year: y, month: m, isoDate };
+    }
+  } catch {
+    // fallback if Intl timeZone is unavailable
+  }
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = now.getMonth() + 1;
+  const d = String(now.getDate()).padStart(2, '0');
+  return {
+    year: y,
+    month: m,
+    isoDate: `${y}-${String(m).padStart(2, '0')}-${d}`,
+  };
+}
+
 export default function App() {
-  const [selectedYear, setSelectedYear] = useState<number>(2026);
-  const [selectedMonth, setSelectedMonth] = useState<number>(10);
+  const [selectedYear, setSelectedYear] = useState<number>(() => getThailandCurrentDateInfo().year);
+  const [selectedMonth, setSelectedMonth] = useState<number>(() => getThailandCurrentDateInfo().month);
+  const userManuallyChangedPeriodRef = useRef<boolean>(false);
+  const lastThailandPeriodKeyRef = useRef<string>(
+    `${getThailandCurrentDateInfo().year}-${getThailandCurrentDateInfo().month}`
+  );
   const [defaultEvPrice, setDefaultEvPrice] = useState<string>('9.60');
   const [highlightChanges, setHighlightChanges] = useState<boolean>(false);
   const [showPrintModal, setShowPrintModal] = useState<boolean>(false);
@@ -117,7 +147,11 @@ export default function App() {
   const sharedPublicUrl = useMemo(() => {
     if (typeof window !== 'undefined') {
       const origin = window.location.origin;
-      if (origin.includes('.trycloudflare.com')) {
+      if (
+        origin.includes('onrender.com') ||
+        origin.includes('.trycloudflare.com') ||
+        (!origin.includes('localhost') && !origin.includes('run.app'))
+      ) {
         return origin;
       }
     }
@@ -127,15 +161,46 @@ export default function App() {
     if (typeof window !== 'undefined' && window.location.origin) {
       return window.location.origin;
     }
-    return '';
+    return 'https://oil-price-myfr.onrender.com';
   }, [serverTunnelUrl]);
+
+  // Sync default month/year with Thailand calendar date & auto-rollover when entering a new month/year
+  const syncPeriodWithThailandIso = useCallback((isoDateStr?: string) => {
+    const info =
+      isoDateStr && /^\d{4}-\d{2}-\d{2}$/.test(isoDateStr)
+        ? {
+            year: Number(isoDateStr.slice(0, 4)),
+            month: Number(isoDateStr.slice(5, 7)),
+          }
+        : getThailandCurrentDateInfo();
+    if (!info.year || !info.month) return;
+    const nextKey = `${info.year}-${info.month}`;
+    if (nextKey !== lastThailandPeriodKeyRef.current) {
+      // Calendar rolled over into a new month/year (e.g. Nov 2026 -> Dec 2026) -> automatically switch!
+      lastThailandPeriodKeyRef.current = nextKey;
+      userManuallyChangedPeriodRef.current = false;
+      setSelectedYear(info.year);
+      setSelectedMonth(info.month);
+    } else if (!userManuallyChangedPeriodRef.current) {
+      setSelectedYear((prev) => (prev !== info.year ? info.year : prev));
+      setSelectedMonth((prev) => (prev !== info.month ? info.month : prev));
+    }
+  }, []);
 
   // Hydrate shared state immediately on mount + subscribe to Server-Sent Events (/api/realtime-stream)
   useEffect(() => {
+    syncPeriodWithThailandIso();
+    const rolloverTimer = setInterval(() => {
+      syncPeriodWithThailandIso();
+    }, 30_000);
+
     fetch('/api/schedule-config')
       .then((r) => r.json())
       .then((res) => {
         if (res?.success) {
+          if (typeof res.todayIsoBangkok === 'string') {
+            syncPeriodWithThailandIso(res.todayIsoBangkok);
+          }
           if (typeof res.publicTunnelUrl === 'string' && res.publicTunnelUrl) {
             setServerTunnelUrl(res.publicTunnelUrl);
           }
@@ -162,6 +227,9 @@ export default function App() {
           const payload = JSON.parse(event.data);
           if (payload?.type === 'state:sync') {
             setRealtimeConnected(true);
+            if (typeof payload.todayIsoBangkok === 'string') {
+              syncPeriodWithThailandIso(payload.todayIsoBangkok);
+            }
             if (typeof payload.publicTunnelUrl === 'string' && payload.publicTunnelUrl) {
               setServerTunnelUrl(payload.publicTunnelUrl);
             }
@@ -195,10 +263,11 @@ export default function App() {
     });
 
     return () => {
+      clearInterval(rolloverTimer);
       if (es) es.close();
       unsubFirestore();
     };
-  }, []);
+  }, [syncPeriodWithThailandIso]);
 
   const fetchBoardData = useCallback(async (year: number, month: number) => {
     setLoading(true);
@@ -458,11 +527,18 @@ export default function App() {
   };
 
   const [isDownloadingZip, setIsDownloadingZip] = useState(false);
+  const [copiedAppCode, setCopiedAppCode] = useState(false);
 
   const handleDownloadZip = async () => {
     try {
       setIsDownloadingZip(true);
-      const res = await fetch('/api/download-zip');
+      let res = await fetch('/api/download-zip');
+      if (!res.ok) {
+        res = await fetch('/ptt-b10-oil-tracker.zip');
+      }
+      if (!res.ok && serverTunnelUrl) {
+        res = await fetch(`${serverTunnelUrl}/api/download-zip`);
+      }
       if (!res.ok) throw new Error('Download failed');
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
@@ -474,9 +550,27 @@ export default function App() {
       document.body.removeChild(link);
       setTimeout(() => URL.revokeObjectURL(url), 5000);
     } catch {
-      window.location.href = '/api/download-zip';
+      const link = document.createElement('a');
+      link.href = '/ptt-b10-oil-tracker.zip';
+      link.download = 'ptt-b10-oil-tracker.zip';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
     } finally {
       setIsDownloadingZip(false);
+    }
+  };
+
+  const handleCopyAppTsx = async () => {
+    try {
+      const res = await fetch('/api/download-app-tsx');
+      if (!res.ok) return;
+      const text = await res.text();
+      await navigator.clipboard.writeText(text);
+      setCopiedAppCode(true);
+      setTimeout(() => setCopiedAppCode(false), 4000);
+    } catch {
+      // ignore
     }
   };
 
@@ -507,6 +601,25 @@ export default function App() {
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={handleCopyAppTsx}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-300 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            title="คัดลอกโค้ด src/App.tsx ไปวางทับใน GitHub ได้ทันทีโดยไม่ต้องแตกไฟล์ ZIP"
+          >
+            {copiedAppCode ? (
+              <>
+                <Check className="w-3.5 h-3.5 text-emerald-600" />
+                <span className="text-emerald-700">คัดลอกโค้ด App.tsx แล้ว!</span>
+              </>
+            ) : (
+              <>
+                <Copy className="w-3.5 h-3.5 text-blue-700" />
+                <span>คัดลอกโค้ด App.tsx (วางใน GitHub)</span>
+              </>
+            )}
+          </button>
+
           <button
             type="button"
             onClick={handleDownloadZip}
@@ -687,12 +800,36 @@ export default function App() {
           <div className="pt-4 grid grid-cols-1 sm:grid-cols-3 gap-4 items-end">
             {/* Month Picker */}
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                ประจำเดือน (Month)
-              </label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-xs font-semibold text-slate-700">
+                  ประจำเดือน (Month)
+                </label>
+                {(() => {
+                  const cur = getThailandCurrentDateInfo();
+                  if (selectedMonth !== cur.month || selectedYear !== cur.year) {
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          userManuallyChangedPeriodRef.current = false;
+                          setSelectedYear(cur.year);
+                          setSelectedMonth(cur.month);
+                        }}
+                        className="text-[11px] font-semibold text-[#1D3C85] hover:underline cursor-pointer"
+                      >
+                        กลับไปเดือนปัจจุบัน
+                      </button>
+                    );
+                  }
+                  return null;
+                })()}
+              </div>
               <select
                 value={selectedMonth}
-                onChange={(e) => setSelectedMonth(Number(e.target.value))}
+                onChange={(e) => {
+                  userManuallyChangedPeriodRef.current = true;
+                  setSelectedMonth(Number(e.target.value));
+                }}
                 className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1D3C85]"
               >
                 {THAI_MONTHS.map((m) => (
@@ -710,12 +847,28 @@ export default function App() {
               </label>
               <select
                 value={selectedYear}
-                onChange={(e) => setSelectedYear(Number(e.target.value))}
+                onChange={(e) => {
+                  userManuallyChangedPeriodRef.current = true;
+                  setSelectedYear(Number(e.target.value));
+                }}
                 className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1D3C85] tabular-nums"
               >
-                <option value={2026}>2026 (พ.ศ. 2569)</option>
-                <option value={2025}>2025 (พ.ศ. 2568)</option>
-                <option value={2024}>2024 (พ.ศ. 2567)</option>
+                {Array.from(
+                  new Set([
+                    getThailandCurrentDateInfo().year + 1,
+                    getThailandCurrentDateInfo().year,
+                    selectedYear,
+                    2026,
+                    2025,
+                    2024,
+                  ])
+                )
+                  .sort((a, b) => b - a)
+                  .map((yr) => (
+                    <option key={yr} value={yr}>
+                      {yr} (พ.ศ. {yr + 543})
+                    </option>
+                  ))}
               </select>
             </div>
 
@@ -1072,7 +1225,7 @@ export default function App() {
             <EmailAlertManager
               year={selectedYear}
               month={selectedMonth}
-              todayThailand={data?.todayThailand || '2026-10-20'}
+              todayThailand={data?.todayThailand || getThailandCurrentDateInfo().isoDate}
               effectiveText={data?.liveBoard?.effectiveText || ''}
               latestB10Price={data?.liveBoard?.b10Price || 0}
               defaultEvPrice={defaultEvPrice}
