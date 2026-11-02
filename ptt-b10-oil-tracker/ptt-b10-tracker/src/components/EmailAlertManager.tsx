@@ -73,7 +73,73 @@ const DEFAULT_RECIPIENT_LIST = [
   'Anuwat.K@pttgcgroup.com',
   'Prasit.Su@pttgcgroup.com',
   'Sirilak.S@pttgcgroup.com',
+  'sales@iclthailand.com',
+  'cs@iclthailand.com',
+  'acc@iclthailand.com',
+  'accounting@tssklogistics.co.th',
+  'thaksisi@scgjwd.com',
+  'jarussem@scgjwd.com',
+  'scgjwd_im-ex_chemry@scgjwd.com',
+  'SCGJWD_HLRY@scgjwd.com',
+  'SITANUNL@SCGJWD.COM',
+  'nnt2556@gmail.com',
+  'nuwongsuwit@gmail.com',
+  'phupastrans111@gmail.com',
+  'kornusa@phupastrans.com',
+  'bbnplh@gmail.com',
+  'accounting2@mapt.co.th',
+  'ch.wachakul@mapt.co.th',
+  'p.pramote@mapt.co.th',
+  'nujaree@mapt.co.th',
+  'phuangchompu@mapt.co.th',
+  'acc_ar1@waruka888.com',
+  'acc_ar2@waruka888.com',
+  'ketsuda.p@waruka888.com',
+  'patchrawat.w@waruka888.com',
 ];
+
+const deduplicateAndSortLogs = (logs: SentEmailLog[]): SentEmailLog[] => {
+  const byDate = new Map<string, SentEmailLog>();
+  for (const log of logs) {
+    if (!log) continue;
+    const key = log.isoDateBangkok || (log.sentAt ? log.sentAt.slice(0, 10) : log.id);
+    if (!key) continue;
+    const existing = byDate.get(key);
+    if (!existing) {
+      byDate.set(key, log);
+    } else {
+      const existingRecipCount = Array.isArray(existing.recipients) ? existing.recipients.length : 0;
+      const incomingRecipCount = Array.isArray(log.recipients) ? log.recipients.length : 0;
+      if (incomingRecipCount > existingRecipCount) {
+        byDate.set(key, log);
+      }
+    }
+  }
+  return Array.from(byDate.values()).sort((a, b) => {
+    const da = a.isoDateBangkok || (a.sentAt ? a.sentAt.slice(0, 10) : '');
+    const db = b.isoDateBangkok || (b.sentAt ? b.sentAt.slice(0, 10) : '');
+    return db.localeCompare(da);
+  });
+};
+
+const loadLocalSentLogs = (): SentEmailLog[] => {
+  try {
+    const raw = localStorage.getItem('ptt_b10_sent_logs_v1');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return deduplicateAndSortLogs(parsed);
+      }
+    }
+  } catch {}
+  return [];
+};
+
+const saveSentLogsLocally = (logs: SentEmailLog[]) => {
+  try {
+    localStorage.setItem('ptt_b10_sent_logs_v1', JSON.stringify(deduplicateAndSortLogs(logs)));
+  } catch {}
+};
 
 const getDeletedRecipients = (): Set<string> => {
   try {
@@ -179,7 +245,9 @@ export const EmailAlertManager: React.FC<EmailAlertManagerProps> = ({
       : 'specific_dates'
   );
   const [scheduledDays, setScheduledDays] = useState<number[]>(() =>
-    Array.isArray(initialLocalCfg?.scheduledDays) ? initialLocalCfg.scheduledDays : [22, 23, 24]
+    Array.isArray(initialLocalCfg?.scheduledDays)
+      ? initialLocalCfg.scheduledDays
+      : [20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
   );
   const [includeEndOfMonth, setIncludeEndOfMonth] = useState<boolean>(() =>
     typeof initialLocalCfg?.includeEndOfMonth === 'boolean'
@@ -195,7 +263,7 @@ export const EmailAlertManager: React.FC<EmailAlertManagerProps> = ({
       ? initialLocalCfg.customSubject
       : 'อัปเดตราคาน้ำมันดีเซล B10 และ EV Price ประจำวันที่ {today}'
   );
-  const [sentLogs, setSentLogs] = useState<SentEmailLog[]>([]);
+  const [sentLogs, setSentLogs] = useState<SentEmailLog[]>(() => loadLocalSentLogs());
   const [scheduleSavedFlash, setScheduleSavedFlash] = useState<boolean>(false);
 
   const [confirmModal, setConfirmModal] = useState<{
@@ -231,7 +299,7 @@ export const EmailAlertManager: React.FC<EmailAlertManagerProps> = ({
         : 'specific_dates',
     scheduledDays: Array.isArray(initialLocalCfg?.scheduledDays)
       ? initialLocalCfg.scheduledDays
-      : [22, 23, 24],
+      : [20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31],
     includeEndOfMonth:
       typeof initialLocalCfg?.includeEndOfMonth === 'boolean'
         ? initialLocalCfg.includeEndOfMonth
@@ -250,14 +318,18 @@ export const EmailAlertManager: React.FC<EmailAlertManagerProps> = ({
   const sharedPublicOrigin = useMemo(() => {
     if (typeof window !== 'undefined') {
       const origin = window.location.origin;
-      if (origin.includes('.trycloudflare.com')) {
+      if (
+        origin.includes('onrender.com') ||
+        origin.includes('.trycloudflare.com') ||
+        (!origin.includes('localhost') && !origin.includes('run.app'))
+      ) {
         return origin;
       }
     }
     if (publicTunnelUrl && publicTunnelUrl.startsWith('https://')) {
       return publicTunnelUrl;
     }
-    return 'https://grant-courtesy-authentic-critical.trycloudflare.com';
+    return 'https://oil-price-myfr.onrender.com';
   }, [publicTunnelUrl]);
 
   const saveRecipientsLocally = (list: string[]) => {
@@ -421,7 +493,24 @@ export const EmailAlertManager: React.FC<EmailAlertManagerProps> = ({
       if (typeof smtpOk === 'boolean') setSmtpConfigured(smtpOk);
       if (typeof smtpUsr === 'string') setSmtpUser(smtpUsr);
       if (Array.isArray(cfg.sentLogs)) {
-        setSentLogs(cfg.sentLogs);
+        const localSavedLogs = loadLocalSentLogs();
+        const serverSentDates = new Set(
+          cfg.sentLogs.map((l: SentEmailLog) => l?.isoDateBangkok).filter(Boolean)
+        );
+        const mergedLogs = deduplicateAndSortLogs([...cfg.sentLogs, ...localSavedLogs]);
+        setSentLogs(mergedLogs);
+        saveSentLogsLocally(mergedLogs);
+
+        const missingOnServer = mergedLogs
+          .filter((l) => l?.isoDateBangkok && !serverSentDates.has(l.isoDateBangkok))
+          .sort((a, b) => (a.isoDateBangkok || '').localeCompare(b.isoDateBangkok || ''));
+        if (missingOnServer.length > 0) {
+          fetch('/api/schedule-config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sentLogs: missingOnServer }),
+          }).catch(() => {});
+        }
       }
 
       const serverUpdatedAt = typeof cfg.updatedAt === 'number' ? cfg.updatedAt : 0;
@@ -925,7 +1014,9 @@ export const EmailAlertManager: React.FC<EmailAlertManagerProps> = ({
           throw new Error(data.error || 'ส่งอีเมลผ่าน Server SMTP ไม่สำเร็จ');
         }
         if (data.config?.sentLogs) {
-          setSentLogs(data.config.sentLogs);
+          const merged = deduplicateAndSortLogs([...data.config.sentLogs, ...sentLogs]);
+          setSentLogs(merged);
+          saveSentLogsLocally(merged);
         }
         setConfirmModal(null);
         setSendFeedback({
@@ -954,12 +1045,13 @@ export const EmailAlertManager: React.FC<EmailAlertManagerProps> = ({
         channel: 'client_gmail',
       };
 
-      const updatedLogs = [newLog, ...sentLogs].slice(0, 25);
+      const updatedLogs = deduplicateAndSortLogs([newLog, ...sentLogs]).slice(0, 50);
       setSentLogs(updatedLogs);
+      saveSentLogsLocally(updatedLogs);
       await fetch('/api/schedule-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sentLogs: updatedLogs }),
+        body: JSON.stringify({ sentLogs: [newLog] }),
       }).catch(() => {});
 
       setConfirmModal(null);
@@ -980,6 +1072,29 @@ export const EmailAlertManager: React.FC<EmailAlertManagerProps> = ({
   };
 
   const monthStr = String(month).padStart(2, '0');
+  const selectedYearMonthKey = `${year}-${monthStr}`;
+
+  const monthlySentLogs = useMemo(() => {
+    return sentLogs.filter((log) => {
+      if (log.isoDateBangkok && /^\d{4}-\d{2}/.test(log.isoDateBangkok)) {
+        return log.isoDateBangkok.slice(0, 7) === selectedYearMonthKey;
+      }
+      if (log.sentAt) {
+        try {
+          const parts = new Intl.DateTimeFormat('en-CA', {
+            timeZone: 'Asia/Bangkok',
+            year: 'numeric',
+            month: '2-digit',
+          }).formatToParts(new Date(log.sentAt));
+          const y = parts.find((p) => p.type === 'year')?.value;
+          const m = parts.find((p) => p.type === 'month')?.value;
+          if (y && m) return `${y}-${m}` === selectedYearMonthKey;
+        } catch {}
+        return log.sentAt.slice(0, 7) === selectedYearMonthKey;
+      }
+      return false;
+    });
+  }, [sentLogs, selectedYearMonthKey]);
 
   return (
     <section
@@ -1507,14 +1622,14 @@ export const EmailAlertManager: React.FC<EmailAlertManagerProps> = ({
         </button>
       </div>
 
-      {/* 4. Recent Sent Logs */}
-      {sentLogs.length > 0 && (
-        <div className="pt-3 border-t border-slate-100">
-          <div className="text-xs font-semibold text-slate-700 mb-2">
-            ประวัติการส่งอีเมลล่าสุด (บันทึกบน Server)
-          </div>
-          <div className="divide-y divide-slate-100 max-h-[130px] overflow-y-auto text-xs">
-            {sentLogs.slice(0, 8).map((log) => (
+      {/* 4. Recent Sent Logs (Filtered by Selected Month & Year) */}
+      <div className="pt-3 border-t border-slate-100">
+        <div className="text-xs font-semibold text-slate-700 mb-2">
+          ประวัติการส่งอีเมลประจำเดือน {monthStr}/{year} (พ.ศ. {year + 543}) — ทั้งหมด {monthlySentLogs.length} วัน
+        </div>
+        {monthlySentLogs.length > 0 ? (
+          <div className="divide-y divide-slate-100 max-h-[220px] overflow-y-auto text-xs">
+            {monthlySentLogs.map((log) => (
               <div key={log.id} className="py-1.5 flex items-center justify-between gap-2">
                 <div className="truncate text-slate-600">
                   <span className="font-mono text-slate-800">
@@ -1544,8 +1659,12 @@ export const EmailAlertManager: React.FC<EmailAlertManagerProps> = ({
               </div>
             ))}
           </div>
-        </div>
-      )}
+        ) : (
+          <div className="py-3 px-3 rounded-lg bg-slate-50 border border-slate-200/80 text-xs text-slate-500 text-center">
+            ยังไม่มีประวัติการส่งอีเมลในเดือน {monthStr}/{year} (พ.ศ. {year + 543})
+          </div>
+        )}
+      </div>
 
       {/* Confirmation Modal for Manual Test Send */}
       {confirmModal?.open && (
