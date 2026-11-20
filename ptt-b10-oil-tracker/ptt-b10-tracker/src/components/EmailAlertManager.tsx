@@ -63,8 +63,15 @@ interface SentEmailLog {
   recipients: string[];
   subject: string;
   b10Price: number;
-  triggerType: 'manual' | 'auto_scheduled_date' | 'auto_daily' | 'auto_price_change';
+  triggerType:
+    | 'manual'
+    | 'auto_scheduled_date'
+    | 'auto_daily'
+    | 'auto_price_change'
+    | 'auto_price_revision';
   channel?: 'server_smtp' | 'client_gmail';
+  revision?: number;
+  previousPrice?: number;
 }
 
 const DEFAULT_RECIPIENT_LIST = [
@@ -98,27 +105,37 @@ const DEFAULT_RECIPIENT_LIST = [
   'patchrawat.w@waruka888.com',
 ];
 
+const getSentLogKey = (log: SentEmailLog): string => {
+  const dateKey = log.isoDateBangkok || (log.sentAt ? log.sentAt.slice(0, 10) : log.id);
+  const rev = Number(log.revision || 0);
+  return dateKey ? `${dateKey}#rev${rev}` : log.id;
+};
+
 const deduplicateAndSortLogs = (logs: SentEmailLog[]): SentEmailLog[] => {
-  const byDate = new Map<string, SentEmailLog>();
+  const byKey = new Map<string, SentEmailLog>();
   for (const log of logs) {
     if (!log) continue;
-    const key = log.isoDateBangkok || (log.sentAt ? log.sentAt.slice(0, 10) : log.id);
+    const key = getSentLogKey(log);
     if (!key) continue;
-    const existing = byDate.get(key);
+    const existing = byKey.get(key);
     if (!existing) {
-      byDate.set(key, log);
+      byKey.set(key, log);
     } else {
       const existingRecipCount = Array.isArray(existing.recipients) ? existing.recipients.length : 0;
       const incomingRecipCount = Array.isArray(log.recipients) ? log.recipients.length : 0;
       if (incomingRecipCount > existingRecipCount) {
-        byDate.set(key, log);
+        byKey.set(key, log);
       }
     }
   }
-  return Array.from(byDate.values()).sort((a, b) => {
+  return Array.from(byKey.values()).sort((a, b) => {
     const da = a.isoDateBangkok || (a.sentAt ? a.sentAt.slice(0, 10) : '');
     const db = b.isoDateBangkok || (b.sentAt ? b.sentAt.slice(0, 10) : '');
-    return db.localeCompare(da);
+    const cmpDate = db.localeCompare(da);
+    if (cmpDate !== 0) return cmpDate;
+    const revDiff = Number(b.revision || 0) - Number(a.revision || 0);
+    if (revDiff !== 0) return revDiff;
+    return (b.sentAt || '').localeCompare(a.sentAt || '');
   });
 };
 
@@ -320,17 +337,15 @@ export const EmailAlertManager: React.FC<EmailAlertManagerProps> = ({
       const origin = window.location.origin;
       if (
         origin.includes('onrender.com') ||
-        origin.includes('.trycloudflare.com') ||
-        (!origin.includes('localhost') && !origin.includes('run.app'))
+        (!origin.includes('localhost') &&
+          !origin.includes('run.app') &&
+          !origin.includes('.trycloudflare.com'))
       ) {
         return origin;
       }
     }
-    if (publicTunnelUrl && publicTunnelUrl.startsWith('https://')) {
-      return publicTunnelUrl;
-    }
     return 'https://oil-price-myfr.onrender.com';
-  }, [publicTunnelUrl]);
+  }, []);
 
   const saveRecipientsLocally = (list: string[]) => {
     try {
@@ -494,16 +509,20 @@ export const EmailAlertManager: React.FC<EmailAlertManagerProps> = ({
       if (typeof smtpUsr === 'string') setSmtpUser(smtpUsr);
       if (Array.isArray(cfg.sentLogs)) {
         const localSavedLogs = loadLocalSentLogs();
-        const serverSentDates = new Set(
-          cfg.sentLogs.map((l: SentEmailLog) => l?.isoDateBangkok).filter(Boolean)
+        const serverSentKeys = new Set(
+          cfg.sentLogs.map((l: SentEmailLog) => (l ? getSentLogKey(l) : '')).filter(Boolean)
         );
         const mergedLogs = deduplicateAndSortLogs([...cfg.sentLogs, ...localSavedLogs]);
         setSentLogs(mergedLogs);
         saveSentLogsLocally(mergedLogs);
 
         const missingOnServer = mergedLogs
-          .filter((l) => l?.isoDateBangkok && !serverSentDates.has(l.isoDateBangkok))
-          .sort((a, b) => (a.isoDateBangkok || '').localeCompare(b.isoDateBangkok || ''));
+          .filter((l) => l?.isoDateBangkok && !serverSentKeys.has(getSentLogKey(l)))
+          .sort((a, b) => {
+            const cmp = (a.isoDateBangkok || '').localeCompare(b.isoDateBangkok || '');
+            if (cmp !== 0) return cmp;
+            return Number(a.revision || 0) - Number(b.revision || 0);
+          });
         if (missingOnServer.length > 0) {
           fetch('/api/schedule-config', {
             method: 'POST',
@@ -1625,13 +1644,13 @@ export const EmailAlertManager: React.FC<EmailAlertManagerProps> = ({
       {/* 4. Recent Sent Logs (Filtered by Selected Month & Year) */}
       <div className="pt-3 border-t border-slate-100">
         <div className="text-xs font-semibold text-slate-700 mb-2">
-          ประวัติการส่งอีเมลประจำเดือน {monthStr}/{year} (พ.ศ. {year + 543}) — ทั้งหมด {monthlySentLogs.length} วัน
+          ประวัติการส่งอีเมลประจำเดือน {monthStr}/{year} (พ.ศ. {year + 543}) — ทั้งหมด {monthlySentLogs.length} รายการ
         </div>
         {monthlySentLogs.length > 0 ? (
           <div className="divide-y divide-slate-100 max-h-[220px] overflow-y-auto text-xs">
             {monthlySentLogs.map((log) => (
               <div key={log.id} className="py-1.5 flex items-center justify-between gap-2">
-                <div className="truncate text-slate-600">
+                <div className="truncate text-slate-600 flex items-center gap-1.5">
                   <span className="font-mono text-slate-800">
                     {new Date(log.sentAt).toLocaleString('th-TH', {
                       day: '2-digit',
@@ -1641,9 +1660,16 @@ export const EmailAlertManager: React.FC<EmailAlertManagerProps> = ({
                       minute: '2-digit',
                     })}
                   </span>
-                  <span className="mx-1.5">·</span>
-                  <span>
-                    {log.triggerType === 'auto_scheduled_date'
+                  {typeof log.revision === 'number' && log.revision > 0 && (
+                    <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 font-mono text-[10px] font-bold shrink-0">
+                      Rev.{String(log.revision).padStart(2, '0')}
+                    </span>
+                  )}
+                  <span>·</span>
+                  <span className="truncate">
+                    {log.triggerType === 'auto_price_revision'
+                      ? 'อัปเดตราคาปรับระหว่างวัน'
+                      : log.triggerType === 'auto_scheduled_date'
                       ? 'ส่งอัตโนมัติตามวันนัดหมาย'
                       : log.triggerType === 'auto_price_change'
                       ? 'ส่งอัตโนมัติเมื่อปรับราคา'
@@ -1858,9 +1884,15 @@ export const EmailAlertManager: React.FC<EmailAlertManagerProps> = ({
                         ประเภทตัวจับเวลา: <strong>Day timer (ตัวจับเวลารายวัน)</strong>
                       </li>
                       <li>
-                        ช่วงเวลาของวัน: <strong>7am to 8am (07:00 น. ถึง 08:00 น.)</strong> แล้วกด Save
+                        ช่วงเวลาของวัน: <strong>8am to 9am (08:00 น. ถึง 09:00 น.)</strong> แล้วกด Save
                       </li>
                     </ul>
+                  </li>
+                  <li>
+                    <strong>เพิ่ม Trigger เช็กปรับราคาระหว่างวันอัตโนมัติ (ส่งเป็น Rev.01, Rev.02...):</strong> กด <strong>+ Add Trigger</strong> อีก 1 อัน &rarr; ฟังก์ชัน: <code className="font-mono font-semibold text-slate-900">checkIntradayPttB10Revision</code> &rarr; <strong>Time-driven</strong> &rarr; <strong>Minutes timer</strong> &rarr; <strong>Every 30 minutes</strong> แล้วกด Save
+                  </li>
+                  <li>
+                    <strong>ตั้งค่าการเก็บข้อมูลถาวร (ทำครั้งเดียว ไม่ต้องแก้ GitHub อีก):</strong> กดปุ่มสีฟ้า <strong>Deploy (การทำให้ใช้งานได้)</strong> มุมขวาบน &rarr; <strong>New deployment (การทำให้ใช้งานได้รายการใหม่)</strong> &rarr; เลือกประเภท <strong>Web app</strong> &rarr; ตั้ง <em>Execute as</em>: <strong>Me</strong> และ <em>Who has access</em>: <strong>Anyone</strong> &rarr; กด <strong>Deploy</strong> แล้วคัดลอก <strong>Web app URL</strong> ไปใส่ใน Render Environment Variables ชื่อ <code className="font-mono bg-slate-100 px-1 rounded">CLOUD_STORE_URL</code>
                   </li>
                 </ol>
               </div>
@@ -1869,31 +1901,32 @@ export const EmailAlertManager: React.FC<EmailAlertManagerProps> = ({
                 <span className="text-base leading-none">✨</span>
                 <div>
                   <div className="font-bold text-emerald-950">
-                    ระบบดึงค่าวันที่และผู้รับสด (Live Config Sync)
+                    ระบบเก็บข้อมูลถาวรบน Google Cloud Store + ส่งอีเมลอัตโนมัติ 100%
                   </div>
                   <p className="mt-0.5 text-slate-700 leading-relaxed">
-                    สคริปต์นี้ถูกเขียนให้ <strong>เชื่อมต่อไปดึงวันที่กำหนดส่งและรายชื่อผู้รับจากหน้าเว็บนี้โดยตรงทุกเช้า</strong> ดังนั้นเมื่อคุณปรับเปลี่ยนวันที่ส่ง (เช่น วันที่ 22, 23, 24) หรือเพิ่ม/ลดอีเมลผู้รับในหน้าเว็บ สคริปต์จะมองเห็นและใช้ค่าใหม่โดยอัตโนมัติ ไม่จำเป็นต้องกลับมาแก้โค้ดใน Apps Script อีกรอบ
+                    เมื่อเชื่อมต่อ <code className="font-mono bg-emerald-100 px-1 rounded">CLOUD_STORE_URL</code> บน Render แล้ว ทุกครั้งที่คุณเปลี่ยนวันส่งหรือเพิ่ม/ลดอีเมลผู้รับบนหน้าเว็บ ระบบจะบันทึกขึ้น Google ถาวรทันที แม้ Render จะหลับและตื่นใหม่ก็จะจำค่าล่าสุดครบ 100% โดยไม่ต้องเข้าไปแก้ไฟล์ใน GitHub อีกต่อไป
                   </p>
                 </div>
               </div>
 
               <div className="flex items-center justify-between">
                 <span className="font-semibold text-slate-700">
-                  โค้ด Code.gs (เชื่อมต่อ Live Sync อัตโนมัติ):
+                  โค้ด Code.gs (Cloud Store ถาวร + แจ้งเตือนอัตโนมัติ):
                 </span>
                 <button
                   type="button"
                   onClick={() => {
                     const scriptText = `/**
  * ระบบอัปเดตและส่งอีเมลราคาน้ำมันดีเซล B10 (Fuel price B10 PTT) อัตโนมัติ
- * ทำงานบน Google Apps Script แบบ 100% เชื่อมต่อและซิงก์วันที่/ผู้รับกับหน้าเว็บอัตโนมัติ
+ * + ระบบเก็บข้อมูลถาวร (Permanent Cloud Store) ให้ Render Free Tier ไม่ล้างค่าเมื่อหลับ
  * ดึงข้อมูลสดจาก http://www.pttor.com/oilprice-board.aspx
- * มีระบบป้องกันการส่งซ้ำในวันเดียวกัน
+ * มีระบบป้องกันการส่งซ้ำในวันเดียวกัน 100%
  */
 const CONFIG = {
   CONFIG_URL: "${sharedPublicOrigin}/api/schedule-config",
   WAKE_UP_URL: "${sharedPublicOrigin}/api/cron-wake",
   LOG_URL: "${sharedPublicOrigin}/api/log-sent-email",
+  CLOUD_STORE_SECRET: "ptt-b10-cloud-sync-2026",
   RECIPIENTS: ${JSON.stringify(recipients)},
   SCHEDULED_DAYS: ${JSON.stringify(scheduledDays)},
   INCLUDE_END_OF_MONTH: ${JSON.stringify(includeEndOfMonth)},
@@ -1901,6 +1934,119 @@ const CONFIG = {
   SUBJECT_TEMPLATE: ${JSON.stringify(customSubject)},
   CUSTOM_OVERRIDES: ${JSON.stringify(customOverrides)}
 };
+
+// ============================================================
+// ส่วนที่ 1: ระบบเก็บข้อมูลถาวร (Permanent Cloud Store สำหรับ Render)
+// แบ่งเก็บเป็น Chunk ย่อยอัตโนมัติ เพื่อรองรับข้อมูลจำนวนมากไม่ติดลิมิต 9KB
+// ============================================================
+function saveCloudStore_(storeObj) {
+  const lock = LockService.getScriptLock();
+  lock.tryLock(10000);
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const raw = JSON.stringify(storeObj);
+    const chunkSize = 7500;
+    const oldCount = Number(props.getProperty("CLOUD_STORE_CHUNKS") || "0");
+    const newCount = Math.ceil(raw.length / chunkSize);
+
+    const updates = { CLOUD_STORE_CHUNKS: String(newCount) };
+    for (let i = 0; i < newCount; i++) {
+      updates["CLOUD_STORE_" + i] = raw.slice(i * chunkSize, (i + 1) * chunkSize);
+    }
+    if (storeObj && storeObj.lastSentDateBangkok) {
+      updates["LAST_SENT_DATE"] = String(storeObj.lastSentDateBangkok);
+    }
+    props.setProperties(updates, false);
+
+    for (let j = newCount; j < oldCount; j++) {
+      props.deleteProperty("CLOUD_STORE_" + j);
+    }
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function loadCloudStore_() {
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const count = Number(props.getProperty("CLOUD_STORE_CHUNKS") || "0");
+    if (!count || count <= 0) return null;
+    let raw = "";
+    for (let i = 0; i < count; i++) {
+      const part = props.getProperty("CLOUD_STORE_" + i);
+      if (part === null) return null;
+      raw += part;
+    }
+    return JSON.parse(raw);
+  } catch (err) {
+    Logger.log("loadCloudStore_ error: " + err);
+    return null;
+  }
+}
+
+function jsonResponse_(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(
+    ContentService.MimeType.JSON
+  );
+}
+
+// Render เรียก GET ตอนตื่นจากหลับเพื่อโหลดรายชื่อผู้รับ + วันส่ง + ประวัติล่าสุด
+function doGet(e) {
+  const secret = e && e.parameter ? String(e.parameter.secret || "") : "";
+  if (secret !== CONFIG.CLOUD_STORE_SECRET) {
+    return jsonResponse_({ success: false, error: "Unauthorized" });
+  }
+  const store = loadCloudStore_();
+  return jsonResponse_({
+    success: true,
+    hasData: Boolean(store),
+    store: store || null
+  });
+}
+
+// Render เรียก POST ทุกครั้งที่คุณแก้หน้าเว็บ (เปลี่ยนวัน/เพิ่ม-ลดคน/ส่งเมล)
+function doPost(e) {
+  try {
+    const raw = e && e.postData && e.postData.contents ? e.postData.contents : "{}";
+    const body = JSON.parse(raw);
+    const secret =
+      (body && body.secret) ||
+      (e && e.parameter && e.parameter.secret) ||
+      "";
+    if (String(secret) !== CONFIG.CLOUD_STORE_SECRET) {
+      return jsonResponse_({ success: false, error: "Unauthorized" });
+    }
+    if (!body || !body.store || typeof body.store !== "object") {
+      return jsonResponse_({ success: false, error: "Invalid store payload" });
+    }
+    saveCloudStore_(body.store);
+    return jsonResponse_({ success: true, savedAt: new Date().toISOString() });
+  } catch (err) {
+    return jsonResponse_({ success: false, error: String(err) });
+  }
+}
+
+// ============================================================
+// ส่วนที่ 2: ระบบส่งอีเมลแจ้งเตือนอัตโนมัติ (Trigger 08:00-09:00 น.)
+// ============================================================
+function fetchJsonWithWakeRetry(url, maxAttempts) {
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      const res = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+      const code = res.getResponseCode();
+      if (code === 200) {
+        return JSON.parse(res.getContentText());
+      }
+      Logger.log("Server HTTP " + code + " from " + url + " (attempt " + (i + 1) + ")");
+    } catch (err) {
+      Logger.log("Fetch error on " + url + " (attempt " + (i + 1) + "): " + err);
+    }
+    if (i < maxAttempts - 1) {
+      Utilities.sleep(15000);
+    }
+  }
+  return null;
+}
 
 function runDailyPttB10Alert() {
   const now = new Date();
@@ -1911,14 +2057,11 @@ function runDailyPttB10Alert() {
   const day = Number(Utilities.formatDate(now, tz, "dd"));
   const lastDayOfMonth = new Date(year, month, 0).getDate();
 
-  // 1. ตรวจสอบระบบป้องกันการส่งซ้ำในวันเดียวกัน
   const props = PropertiesService.getScriptProperties();
-  if (props.getProperty("LAST_SENT_DATE") === todayIso) {
-    Logger.log("วันนี้ (" + todayIso + ") มีการส่งอีเมลไปแล้ว ระบบป้องกันการส่งซ้ำทำงาน");
-    return;
-  }
 
-  // 2. ดึงการตั้งค่าสด (Live Config) จากระบบเว็บ เพื่อให้ล้อกับวันที่และรายชื่อผู้รับที่คุณปรับในหน้าเว็บเสมอ
+  // 1. โหลดข้อมูลล่าสุดจาก Google Cloud Store ในตัวสคริปต์ก่อนเลย (แม่นยำ 100% แม้ Render หลับอยู่)
+  const cloudStore = loadCloudStore_();
+  let activeAutoEnabled = true;
   let activeRecipients = CONFIG.RECIPIENTS;
   let activeDays = CONFIG.SCHEDULED_DAYS;
   let activeIncludeEndOfMonth = CONFIG.INCLUDE_END_OF_MONTH;
@@ -1926,61 +2069,242 @@ function runDailyPttB10Alert() {
   let activeSubject = CONFIG.SUBJECT_TEMPLATE;
   let activeOverrides = CONFIG.CUSTOM_OVERRIDES;
 
-  try {
-    const configRes = UrlFetchApp.fetch(CONFIG.CONFIG_URL, { muteHttpExceptions: true });
-    if (configRes.getResponseCode() === 200) {
-      const cfgData = JSON.parse(configRes.getContentText());
-      if (cfgData && cfgData.sentToday === true) {
-        props.setProperty("LAST_SENT_DATE", todayIso);
-        Logger.log("ระบบเว็บส่งอีเมลของวันนี้ไปเรียบร้อยแล้ว ล็อกกันส่งซ้ำ");
-        return;
-      }
-      if (cfgData && cfgData.config) {
-        const c = cfgData.config;
-        if (Array.isArray(c.scheduledDays)) activeDays = c.scheduledDays;
-        if (typeof c.includeEndOfMonth === "boolean") activeIncludeEndOfMonth = c.includeEndOfMonth;
-        if (Array.isArray(c.recipients) && c.recipients.length > 0) activeRecipients = c.recipients;
-        if (c.defaultEvPrice) activeEvPrice = c.defaultEvPrice;
-        if (c.customSubject) activeSubject = c.customSubject;
-        if (c.customOverrides) activeOverrides = c.customOverrides;
-        Logger.log("ดึงการตั้งค่าสดสำเร็จ! วันที่กำหนดส่งล่าสุดจากระบบ: " + JSON.stringify(activeDays));
-      }
+  if (cloudStore) {
+    if (typeof cloudStore.autoEnabled === "boolean") activeAutoEnabled = cloudStore.autoEnabled;
+    if (Array.isArray(cloudStore.recipients) && cloudStore.recipients.length > 0) {
+      activeRecipients = cloudStore.recipients;
     }
-  } catch (err) {
-    Logger.log("เซิร์ฟเวอร์เว็บหลับอยู่หรือดึงการตั้งค่าสดไม่สำเร็จ จะใช้ค่าสำรองในโค้ด: " + err);
+    if (Array.isArray(cloudStore.scheduledDays)) {
+      activeDays = cloudStore.scheduledDays;
+    }
+    if (typeof cloudStore.includeEndOfMonth === "boolean") {
+      activeIncludeEndOfMonth = cloudStore.includeEndOfMonth;
+    }
+    if (cloudStore.defaultEvPrice) activeEvPrice = cloudStore.defaultEvPrice;
+    if (cloudStore.customSubject) activeSubject = cloudStore.customSubject;
+    if (cloudStore.customOverrides) activeOverrides = cloudStore.customOverrides;
+
+    // ตรวจสอบล็อกกันส่งซ้ำจากประวัติใน Cloud Store ด้วย
+    if (
+      Array.isArray(cloudStore.sentLogs) &&
+      cloudStore.sentLogs.some(function(l) {
+        return l && l.isoDateBangkok === todayIso;
+      })
+    ) {
+      props.setProperty("LAST_SENT_DATE", todayIso);
+      Logger.log("วันนี้ (" + todayIso + ") มีประวัติส่งอีเมลแล้วใน Cloud Store ล็อกกันส่งซ้ำ");
+      return;
+    }
+    Logger.log(
+      "โหลดการตั้งค่าถาวรจาก Cloud Store สำเร็จ! ผู้รับ: " +
+        activeRecipients.length +
+        " ท่าน | วันส่ง: " +
+        JSON.stringify(activeDays) +
+        " | สิ้นเดือน: " +
+        activeIncludeEndOfMonth
+    );
   }
 
-  // 3. ตรวจสอบว่าวันนี้ตรงกับวันที่กำหนดส่งหรือไม่ (ล้อตามวันที่ที่เลือกในเว็บล่าสุดแบบอัตโนมัติ)
+  if (!activeAutoEnabled) {
+    Logger.log("ระบบแจ้งเตือนอัตโนมัติถูกปิดไว้ในหน้าเว็บ (autoEnabled = false)");
+    return;
+  }
+
+  // 2. ตรวจสอบระบบป้องกันการส่งซ้ำในวันเดียวกัน
+  if (props.getProperty("LAST_SENT_DATE") === todayIso) {
+    Logger.log("วันนี้ (" + todayIso + ") มีการส่งอีเมลไปแล้ว ระบบป้องกันการส่งซ้ำทำงาน");
+    return;
+  }
+
+  // 3. ตรวจสอบว่าวันนี้ตรงกับวันที่กำหนดส่งหรือไม่
   const isScheduledToday =
     activeDays.indexOf(day) !== -1 ||
     (activeIncludeEndOfMonth && day === lastDayOfMonth);
 
   if (!isScheduledToday) {
-    Logger.log("วันนี้ (" + todayIso + ") ไม่ใช่วันที่มีรอบส่งอีเมลตามการตั้งค่าล่าสุด (" + JSON.stringify(activeDays) + ")");
+    Logger.log("วันนี้ (" + todayIso + ") ไม่ใช่วันที่มีรอบส่งอีเมล (" + JSON.stringify(activeDays) + ")");
     return;
   }
 
-  // 4. สั่งปลุกเซิร์ฟเวอร์หลักและให้เซิร์ฟเวอร์ส่งผ่าน SMTP ก่อน หากเซิร์ฟเวอร์ทำงานสำเร็จจะส่งค่ากลับมา
-  try {
-    const wakeRes = UrlFetchApp.fetch(CONFIG.WAKE_UP_URL, { muteHttpExceptions: true });
-    if (wakeRes.getResponseCode() === 200) {
-      const wakeJson = JSON.parse(wakeRes.getContentText());
-      if (wakeJson && wakeJson.sentToday === true) {
-        props.setProperty("LAST_SENT_DATE", todayIso);
-        Logger.log("เซิร์ฟเวอร์หลักส่งอีเมลเรียบร้อยแล้ว บันทึกล็อกกันส่งซ้ำ");
-        return;
-      }
-    }
-  } catch (e) {
-    Logger.log("เซิร์ฟเวอร์หลักหลับอยู่ กำลังส่งจาก Google Apps Script โดยตรง...");
+  // 4. สั่งปลุกเซิร์ฟเวอร์ Render และให้ Render ส่งผ่าน Gmail SMTP ก่อน (รองรับการรอ Render ตื่น)
+  const wakeJson = fetchJsonWithWakeRetry(CONFIG.WAKE_UP_URL, 3);
+  if (wakeJson && wakeJson.sentToday === true) {
+    props.setProperty("LAST_SENT_DATE", todayIso);
+    Logger.log("เซิร์ฟเวอร์หลัก Render ส่งอีเมลเรียบร้อยแล้ว บันทึกล็อกกันส่งซ้ำ");
+    return;
   }
 
-  // 5. หากเซิร์ฟเวอร์ไม่พร้อม ดึงราคาน้ำมันดีเซล B10 จาก http://www.pttor.com/oilprice-board.aspx และส่งเมลโดยตรง
+  // 5. หากเซิร์ฟเวอร์หลักยังไม่ส่งหรือหลับอยู่ Google Apps Script จะดึงราคาจาก PTT OR และส่งเมลตรงให้ทันที
+  Logger.log("กำลังส่งอีเมลโดยตรงจาก Google Apps Script...");
   sendPttB10SheetDirectly(year, month, day, todayIso, props, {
     recipients: activeRecipients,
     evPrice: activeEvPrice,
     subjectTemplate: activeSubject,
     customOverrides: activeOverrides
+  });
+}
+
+function getLatestTodayLog_(cloudStore, todayIso) {
+  if (!cloudStore || !Array.isArray(cloudStore.sentLogs)) return null;
+  const todays = cloudStore.sentLogs.filter(function(l) {
+    return l && l.isoDateBangkok === todayIso;
+  });
+  if (todays.length === 0) return null;
+  todays.sort(function(a, b) {
+    const revCmp = Number(b.revision || 0) - Number(a.revision || 0);
+    if (revCmp !== 0) return revCmp;
+    return String(b.sentAt || "").localeCompare(String(a.sentAt || ""));
+  });
+  return todays[0];
+}
+
+function fetchLivePttB10Board_() {
+  try {
+    const boardRes = UrlFetchApp.fetch("http://www.pttor.com/oilprice-board.aspx", { muteHttpExceptions: true });
+    if (boardRes.getResponseCode() !== 200) {
+      return { found: false, price: 0, effectiveText: "ล่าสุด" };
+    }
+    const html = boardRes.getContentText();
+    const subheadMatch = html.match(/<div\\s+class=["']obox-subhead["'][^>]*>([\\s\\S]*?)<\\/div>/i);
+    const effectiveText = subheadMatch ? subheadMatch[1].replace(/<[^>]+>/g, " ").replace(/\\s+/g, " ").trim() : "ล่าสุด";
+
+    const boardRegex = /<div\\s+class=["']oil-board["'][^>]*>[\\s\\S]*?<img[^>]*alt=["']([^"']+)["'][^>]*src=["']([^"']+)["'][^>]*>[\\s\\S]*?<div\\s+class=["']oil-price["'][^>]*>([\\s\\S]*?)<\\/div>/gi;
+    let match;
+    const items = [];
+    while ((match = boardRegex.exec(html)) !== null) {
+      const name = match[1].trim();
+      const p = parseFloat(match[3].replace(/[^\\d.]/g, ""));
+      if (!isNaN(p)) {
+        items.push({ name: name, lower: name.toLowerCase(), price: p });
+      }
+    }
+
+    const b10Found =
+      items.find(function(it) {
+        return (
+          it.lower === "diesel" ||
+          it.lower === "ดีเซล" ||
+          it.lower === "diesel b10" ||
+          it.lower === "ดีเซล b10" ||
+          it.lower === "ultraforce diesel"
+        );
+      }) ||
+      items.find(function(it) {
+        return it.lower.indexOf("b10") !== -1;
+      }) ||
+      items.find(function(it) {
+        return (
+          it.lower.indexOf("diesel") !== -1 &&
+          it.lower.indexOf("b20") === -1 &&
+          it.lower.indexOf("premium") === -1 &&
+          it.lower.indexOf("super") === -1
+        );
+      });
+
+    if (b10Found && b10Found.price > 10 && b10Found.price < 200) {
+      return { found: true, price: b10Found.price, effectiveText: effectiveText };
+    }
+    return { found: false, price: 0, effectiveText: effectiveText };
+  } catch (err) {
+    Logger.log("fetchLivePttB10Board_ error: " + err);
+    return { found: false, price: 0, effectiveText: "ล่าสุด" };
+  }
+}
+
+// ============================================================
+// ส่วนที่ 3: ตรวจจับการปรับราคาน้ำมันระหว่างวันอัตโนมัติ (Rev.01, Rev.02, ...)
+// ตั้ง Trigger ทุก 30 นาที — เฉพาะวันที่มีรอบส่ง หลังส่งรอบเช้าแล้วเท่านั้น
+// ============================================================
+function checkIntradayPttB10Revision() {
+  const now = new Date();
+  const tz = "Asia/Bangkok";
+  const hour = Number(Utilities.formatDate(now, tz, "HH"));
+  if (hour < 9) {
+    return; // เช็กเฉพาะช่วงหลัง 09:00 น. เป็นต้นไป (หลังรอบเช้า)
+  }
+
+  const todayIso = Utilities.formatDate(now, tz, "yyyy-MM-dd");
+  const year = Number(Utilities.formatDate(now, tz, "yyyy"));
+  const month = Number(Utilities.formatDate(now, tz, "MM"));
+  const day = Number(Utilities.formatDate(now, tz, "dd"));
+  const lastDayOfMonth = new Date(year, month, 0).getDate();
+
+  const cloudStore = loadCloudStore_();
+  let activeAutoEnabled = true;
+  let activeRecipients = CONFIG.RECIPIENTS;
+  let activeDays = CONFIG.SCHEDULED_DAYS;
+  let activeIncludeEndOfMonth = CONFIG.INCLUDE_END_OF_MONTH;
+  let activeEvPrice = CONFIG.DEFAULT_EV_PRICE;
+  let activeSubject = CONFIG.SUBJECT_TEMPLATE;
+  let activeOverrides = CONFIG.CUSTOM_OVERRIDES;
+
+  if (cloudStore) {
+    if (typeof cloudStore.autoEnabled === "boolean") activeAutoEnabled = cloudStore.autoEnabled;
+    if (Array.isArray(cloudStore.recipients) && cloudStore.recipients.length > 0) activeRecipients = cloudStore.recipients;
+    if (Array.isArray(cloudStore.scheduledDays)) activeDays = cloudStore.scheduledDays;
+    if (typeof cloudStore.includeEndOfMonth === "boolean") activeIncludeEndOfMonth = cloudStore.includeEndOfMonth;
+    if (cloudStore.defaultEvPrice) activeEvPrice = cloudStore.defaultEvPrice;
+    if (cloudStore.customSubject) activeSubject = cloudStore.customSubject;
+    if (cloudStore.customOverrides) activeOverrides = cloudStore.customOverrides;
+  }
+
+  if (!activeAutoEnabled) return;
+
+  const isScheduledToday =
+    activeDays.indexOf(day) !== -1 ||
+    (activeIncludeEndOfMonth && day === lastDayOfMonth);
+  if (!isScheduledToday) return;
+
+  const latestTodayLog = getLatestTodayLog_(cloudStore, todayIso);
+  if (!latestTodayLog || typeof latestTodayLog.b10Price !== "number") {
+    return; // ยังไม่ได้ส่งรอบเช้าของวันนี้
+  }
+
+  const board = fetchLivePttB10Board_();
+  if (!board.found) {
+    Logger.log("ไม่สามารถดึงราคา B10 สดจาก pttor.com ได้ ข้ามรอบเช็กนี้");
+    return;
+  }
+
+  const lastSentPrice = Number(latestTodayLog.b10Price);
+  if (Math.abs(board.price - lastSentPrice) < 0.005) {
+    Logger.log("ราคา B10 ระหว่างวันยังไม่เปลี่ยน (" + board.price.toFixed(2) + " บาท)");
+    return;
+  }
+
+  const nextRevision = Number(latestTodayLog.revision || 0) + 1;
+  const revTag = "Rev." + ("0" + nextRevision).slice(-2);
+  Logger.log(
+    "ตรวจพบการปรับราคาน้ำมัน B10 ระหว่างวัน (" +
+      lastSentPrice.toFixed(2) +
+      " -> " +
+      board.price.toFixed(2) +
+      ") กำลังส่งแจ้งเตือน " +
+      revTag
+  );
+
+  // ลองปลุก Render ให้ส่งผ่าน Gmail SMTP ก่อน
+  const wakeUrl = CONFIG.WAKE_UP_URL + (CONFIG.WAKE_UP_URL.indexOf("?") === -1 ? "?" : "&") + "checkRevision=1";
+  const wakeJson = fetchJsonWithWakeRetry(wakeUrl, 3);
+  if (
+    wakeJson &&
+    typeof wakeJson.latestB10Price === "number" &&
+    Math.abs(wakeJson.latestB10Price - board.price) < 0.005
+  ) {
+    Logger.log("เซิร์ฟเวอร์หลัก Render ส่งแจ้งเตือน " + revTag + " เรียบร้อยแล้ว");
+    return;
+  }
+
+  // หาก Render ตื่นไม่ทัน ส่งตรงจาก Google Apps Script พร้อมระบุ (Rev.01 / Rev.02...) ทันที
+  const props = PropertiesService.getScriptProperties();
+  sendPttB10SheetDirectly(year, month, day, todayIso, props, {
+    recipients: activeRecipients,
+    evPrice: activeEvPrice,
+    subjectTemplate: activeSubject,
+    customOverrides: activeOverrides,
+    revision: nextRevision,
+    previousPrice: lastSentPrice,
+    preFetchedBoard: board
   });
 }
 
@@ -1990,52 +2314,12 @@ function sendPttB10SheetDirectly(year, month, todayDay, todayIso, props, liveOpt
   const targetEvPrice = liveOptions.evPrice || CONFIG.DEFAULT_EV_PRICE;
   const targetSubjectTemplate = liveOptions.subjectTemplate || CONFIG.SUBJECT_TEMPLATE;
   const targetOverrides = liveOptions.customOverrides || CONFIG.CUSTOM_OVERRIDES;
+  const revisionNum = Number(liveOptions.revision || 0);
+  const previousPrice = typeof liveOptions.previousPrice === "number" ? liveOptions.previousPrice : null;
 
-  const boardRes = UrlFetchApp.fetch("http://www.pttor.com/oilprice-board.aspx", { muteHttpExceptions: true });
-  const html = boardRes.getContentText();
-
-  // ดึงข้อความวันที่ปรับราคาสดจาก obox-subhead เช่น ปรับราคาเมื่อ 21 ต.ค. 2569 05:00
-  const subheadMatch = html.match(/<div\\s+class=["']obox-subhead["'][^>]*>([\\s\\S]*?)<\\/div>/i);
-  const effectiveText = subheadMatch ? subheadMatch[1].replace(/<[^>]+>/g, " ").replace(/\\s+/g, " ").trim() : "ล่าสุด";
-
-  const boardRegex = /<div\\s+class=["']oil-board["'][^>]*>[\\s\\S]*?<img[^>]*alt=["']([^"']+)["'][^>]*src=["']([^"']+)["'][^>]*>[\\s\\S]*?<div\\s+class=["']oil-price["'][^>]*>([\\s\\S]*?)<\\/div>/gi;
-  let match;
-  let liveB10Price = 43.54;
-  const items = [];
-  while ((match = boardRegex.exec(html)) !== null) {
-    const name = match[1].trim();
-    const p = parseFloat(match[3].replace(/[^\\d.]/g, ""));
-    if (!isNaN(p)) {
-      items.push({ name: name, lower: name.toLowerCase(), price: p });
-    }
-  }
-
-  // คัดเลือกราคาน้ำมันดีเซล B10 / ดีเซลมาตรฐาน (ป้องกันไม่ให้แมตช์โดน Diesel B20 37.19 หรือ Premium Diesel)
-  const b10Found =
-    items.find(function(it) {
-      return (
-        it.lower === "diesel" ||
-        it.lower === "ดีเซล" ||
-        it.lower === "diesel b10" ||
-        it.lower === "ดีเซล b10" ||
-        it.lower === "ultraforce diesel"
-      );
-    }) ||
-    items.find(function(it) {
-      return it.lower.indexOf("b10") !== -1;
-    }) ||
-    items.find(function(it) {
-      return (
-        it.lower.indexOf("diesel") !== -1 &&
-        it.lower.indexOf("b20") === -1 &&
-        it.lower.indexOf("premium") === -1 &&
-        it.lower.indexOf("super") === -1
-      );
-    });
-
-  if (b10Found) {
-    liveB10Price = b10Found.price;
-  }
+  const board = liveOptions.preFetchedBoard || fetchLivePttB10Board_();
+  const effectiveText = board.effectiveText || "ล่าสุด";
+  const liveB10Price = board.found ? board.price : 43.54;
 
   // ดึงประวัติการปรับราคาในเดือนนั้นจาก PTT OR
   const pointMap = {};
@@ -2101,16 +2385,27 @@ function sendPttB10SheetDirectly(year, month, todayDay, todayIso, props, liveOpt
       '</tr>';
   }
 
+  const revTag = revisionNum > 0 ? "Rev." + ("0" + revisionNum).slice(-2) : "";
+  const revSuffix = revTag ? " (" + revTag + ")" : "";
+
   const subject = targetSubjectTemplate
     .replace("{today}", todayFormatted)
     .replace("{price}", liveB10Price.toFixed(2))
     .replace("{month}", monthStr)
-    .replace("{year}", String(year));
+    .replace("{year}", String(year)) + revSuffix;
+
+  const revisionBanner = revTag
+    ? '<div style="margin-bottom: 12px; padding: 8px 12px; background-color: #FEF3C7; border: 1px solid #F59E0B; border-radius: 6px; font-size: 13px; color: #92400E;">' +
+      '<strong>แจ้งอัปเดตแก้ไขราคาปรับระหว่างวัน (' + revTag + '):</strong> ราคาน้ำมันดีเซล B10 ปรับเปลี่ยน' +
+      (previousPrice !== null ? 'จาก <strong>' + previousPrice.toFixed(2) + '</strong> ' : ' ') +
+      'เป็น <strong>' + liveB10Price.toFixed(2) + ' บาท/ลิตร</strong></div>'
+    : '';
 
   const htmlBody = '<!DOCTYPE html><html lang="th"><head><meta charset="UTF-8"></head>' +
     '<body style="margin: 0; padding: 16px; background-color: #FFFFFF; font-family: Calibri, Arial, sans-serif; color: #0F172A;">' +
+    revisionBanner +
     '<div style="margin-bottom: 12px; font-size: 14px; color: #1E293B;">' +
-    '<strong>รายงานอัปเดตราคาน้ำมันดีเซล B10 (Fuel price B10 PTT) และ EV price</strong><br/>' +
+    '<strong>รายงานอัปเดตราคาน้ำมันดีเซล B10 (Fuel price B10 PTT) และ EV price' + revSuffix + '</strong><br/>' +
     '<span style="font-size: 12px; color: #475569;">ข้อมูลอ้างอิงจาก: <a href="http://www.pttor.com/oilprice-board.aspx" style="color: #1D3C85;">http://www.pttor.com/oilprice-board.aspx</a> (' + effectiveText + ')</span>' +
     '</div>' +
     '<table cellpadding="0" cellspacing="0" style="border-collapse: collapse; border: 1px solid #000000; width: 440px; background-color: #FFFFFF;">' +
@@ -2127,23 +2422,45 @@ function sendPttB10SheetDirectly(year, month, todayDay, todayIso, props, liveOpt
     htmlBody: htmlBody
   });
 
-  // บันทึกล็อกป้องกันการส่งซ้ำในวันเดียวกัน
+  // บันทึกล็อกป้องกันการส่งซ้ำ + บันทึกประวัติลง Cloud Store (แยกตาม Rev. เพื่อเก็บครบทุกฉบับ)
   props.setProperty("LAST_SENT_DATE", todayIso);
-  Logger.log("ส่งอีเมลสำเร็จไปยัง: " + targetRecipients.join(", ") + " (ราคา B10: " + liveB10Price.toFixed(2) + " บาท)");
+  const directLog = {
+    id: "gas_" + todayIso.replace(/-/g, "") + "_r" + revisionNum + "_" + Date.now(),
+    sentAt: new Date().toISOString(),
+    isoDateBangkok: todayIso,
+    recipients: targetRecipients,
+    subject: subject,
+    b10Price: liveB10Price,
+    triggerType: revisionNum > 0 ? "auto_price_revision" : "auto_scheduled_date",
+    channel: "server_smtp"
+  };
+  if (revisionNum > 0) {
+    directLog.revision = revisionNum;
+    if (previousPrice !== null) directLog.previousPrice = previousPrice;
+  }
+
+  try {
+    const existingCloud = loadCloudStore_();
+    if (existingCloud) {
+      const prevLogs = Array.isArray(existingCloud.sentLogs) ? existingCloud.sentLogs : [];
+      const filtered = prevLogs.filter(function(l) {
+        return !(l && l.isoDateBangkok === todayIso && Number(l.revision || 0) === revisionNum);
+      });
+      existingCloud.sentLogs = [directLog].concat(filtered).slice(0, 30);
+      existingCloud.lastSentDateBangkok = todayIso;
+      existingCloud.updatedAt = Math.max((existingCloud.updatedAt || 0) + 1, Date.now());
+      saveCloudStore_(existingCloud);
+    }
+  } catch (e) {}
+
+  Logger.log("ส่งอีเมลสำเร็จไปยัง: " + targetRecipients.join(", ") + " (ราคา B10: " + liveB10Price.toFixed(2) + " บาท" + revSuffix + ")");
 
   // บันทึกประวัติส่งเมลกลับมายังหน้าเว็บ Dashboard
   try {
     UrlFetchApp.fetch(CONFIG.LOG_URL || CONFIG.WAKE_UP_URL.replace("/api/cron-wake", "/api/log-sent-email"), {
       method: "post",
       contentType: "application/json",
-      payload: JSON.stringify({
-        sentAt: new Date().toISOString(),
-        isoDateBangkok: todayIso,
-        recipients: targetRecipients,
-        subject: subject,
-        b10Price: liveB10Price,
-        triggerType: "auto_scheduled_date"
-      }),
+      payload: JSON.stringify(directLog),
       muteHttpExceptions: true
     });
   } catch (e) {}
