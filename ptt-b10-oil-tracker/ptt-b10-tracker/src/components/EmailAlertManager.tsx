@@ -2255,6 +2255,10 @@ function fetchLivePttB10Board_(targetYear, todayIso) {
   try {
     const histRes = UrlFetchApp.fetch("https://www.pttor.com/wp-admin/admin-ajax.php", {
       method: "post",
+      headers: {
+        "User-Agent": "Mozilla/5.0",
+        "Referer": "http://www.pttor.com/oilprice-board.aspx"
+      },
       payload: {
         action: "fetch_oil_prices",
         province: "กรุงเทพมหานคร",
@@ -2297,6 +2301,7 @@ function fetchLivePttB10Board_(targetYear, todayIso) {
       found: true,
       price: latestHistPrice,
       effectiveText: formatThaiEffectiveFromRaw_(latestHistRaw),
+      effectiveAt: latestHistRaw,
       pointMap: pointMap
     };
   }
@@ -2306,16 +2311,18 @@ function fetchLivePttB10Board_(targetYear, todayIso) {
       found: true,
       price: boardPrice,
       effectiveText: effectiveText,
+      effectiveAt: boardRaw || "",
       pointMap: pointMap
     };
   }
 
-  return { found: false, price: 0, effectiveText: effectiveText, pointMap: pointMap };
+  return { found: false, price: 0, effectiveText: effectiveText, effectiveAt: "", pointMap: pointMap };
 }
 
 // ============================================================
 // ส่วนที่ 3: ตรวจจับการปรับราคาน้ำมันระหว่างวันอัตโนมัติ (Rev.01, Rev.02, ...)
 // ตั้ง Trigger ทุก 30 นาที — เฉพาะวันที่มีรอบส่ง หลังส่งรอบเช้าแล้วเท่านั้น
+// มีระบบกันส่งย้อนราคาเก่า (Anti-Ping-Pong): จะส่งเฉพาะประกาศที่มีผล "วันนี้" และเวลาใหม่กว่าเดิมเท่านั้น
 // ============================================================
 function checkIntradayPttB10Revision() {
   const now = new Date();
@@ -2368,6 +2375,16 @@ function checkIntradayPttB10Revision() {
     return;
   }
 
+  // ระบบป้องกันส่งย้อนราคาเก่า (Anti-Ping-Pong): ต้องเป็นประกาศที่มีผล "วันนี้" เท่านั้น ห้ามใช้หน้ากระดานค้างแคชเมื่อวาน!
+  if (!board.effectiveAt || board.effectiveAt.indexOf(todayIso) !== 0) {
+    Logger.log("ราคาที่ดึงได้มีวันที่มีผล (" + (board.effectiveAt || "ไม่ระบุ") + ") ไม่ใช่วันนี้ (" + todayIso + ") ข้ามเพื่อป้องกันส่งย้อนราคาเก่า");
+    return;
+  }
+  if (latestTodayLog.priceEffectiveAt && board.effectiveAt <= latestTodayLog.priceEffectiveAt) {
+    Logger.log("เวลาที่มีผล (" + board.effectiveAt + ") ไม่ใหม่กว่ารอบล่าสุด (" + latestTodayLog.priceEffectiveAt + ") ไม่ต้องส่ง Revise");
+    return;
+  }
+
   const lastSentPrice = Number(latestTodayLog.b10Price);
   if (Math.abs(board.price - lastSentPrice) < 0.005) {
     Logger.log("ราคา B10 ระหว่างวันยังไม่เปลี่ยน (" + board.price.toFixed(2) + " บาท)");
@@ -2378,6 +2395,8 @@ function checkIntradayPttB10Revision() {
   const revTag = "Rev." + ("0" + nextRevision).slice(-2);
   Logger.log(
     "ตรวจพบการปรับราคาน้ำมัน B10 ระหว่างวัน (" +
+      board.effectiveAt +
+      ": " +
       lastSentPrice.toFixed(2) +
       " -> " +
       board.price.toFixed(2) +
@@ -2508,6 +2527,7 @@ function sendPttB10SheetDirectly(year, month, todayDay, todayIso, props, liveOpt
     recipients: targetRecipients,
     subject: subject,
     b10Price: liveB10Price,
+    priceEffectiveAt: board.effectiveAt || "",
     triggerType: revisionNum > 0 ? "auto_price_revision" : "auto_scheduled_date",
     channel: "server_smtp"
   };
