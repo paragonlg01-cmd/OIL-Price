@@ -2158,57 +2158,159 @@ function getLatestTodayLog_(cloudStore, todayIso) {
   return todays[0];
 }
 
-function fetchLivePttB10Board_() {
+function formatThaiEffectiveFromRaw_(rawStr) {
+  const m = String(rawStr || "").match(/^(\\d{4})-(\\d{2})-(\\d{2})(?:[T\\s](\\d{2}:\\d{2}))?/);
+  if (!m) return rawStr || "ล่าสุด";
+  const months = ["", "ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
+  const yr = parseInt(m[1], 10);
+  const mo = parseInt(m[2], 10);
+  const dy = parseInt(m[3], 10);
+  const tm = m[4] || "05:00";
+  const beYr = yr < 2400 ? yr + 543 : yr;
+  return "ปรับราคาเมื่อ " + dy + " " + (months[mo] || mo) + " " + beYr + " " + tm;
+}
+
+function parseThaiSubheadToRaw_(subheadText) {
+  const monthsMap = {
+    "ม.ค.": 1, "ก.พ.": 2, "มี.ค.": 3, "เม.ย.": 4, "พ.ค.": 5, "มิ.ย.": 6,
+    "ก.ค.": 7, "ส.ค.": 8, "ก.ย.": 9, "ต.ค.": 10, "พ.ย.": 11, "ธ.ค.": 12
+  };
+  const m = String(subheadText || "").match(/(\\d{1,2})\\s+([ก-๙.]+)\\s+(\\d{4})(?:\\s+(\\d{1,2}:\\d{2}))?/);
+  if (!m) return "";
+  const dy = ("0" + parseInt(m[1], 10)).slice(-2);
+  const mo = ("0" + (monthsMap[m[2]] || 1)).slice(-2);
+  let yr = parseInt(m[3], 10);
+  if (yr > 2400) yr -= 543;
+  const tm = m[4] ? (m[4].length === 4 ? "0" + m[4] : m[4]) : "05:00";
+  return yr + "-" + mo + "-" + dy + "T" + tm;
+}
+
+function fetchLivePttB10Board_(targetYear, todayIso) {
+  let boardFound = false;
+  let boardPrice = 0;
+  let effectiveText = "ล่าสุด";
+  let boardRaw = "";
+  const pointMap = {};
+  const pointRawMap = {};
+
+  // 1) ดึงหน้ากระดานหลัก oilprice-board.aspx
   try {
     const boardRes = UrlFetchApp.fetch("http://www.pttor.com/oilprice-board.aspx", { muteHttpExceptions: true });
-    if (boardRes.getResponseCode() !== 200) {
-      return { found: false, price: 0, effectiveText: "ล่าสุด" };
-    }
-    const html = boardRes.getContentText();
-    const subheadMatch = html.match(/<div\\s+class=["']obox-subhead["'][^>]*>([\\s\\S]*?)<\\/div>/i);
-    const effectiveText = subheadMatch ? subheadMatch[1].replace(/<[^>]+>/g, " ").replace(/\\s+/g, " ").trim() : "ล่าสุด";
+    if (boardRes.getResponseCode() >= 200 && boardRes.getResponseCode() < 300) {
+      const html = boardRes.getContentText();
+      const subheadMatch = html.match(/<div\\s+class=["']obox-subhead["'][^>]*>([\\s\\S]*?)<\\/div>/i);
+      if (subheadMatch) {
+        effectiveText = subheadMatch[1].replace(/<[^>]+>/g, " ").replace(/\\s+/g, " ").trim() || "ล่าสุด";
+        boardRaw = parseThaiSubheadToRaw_(effectiveText);
+      }
 
-    const boardRegex = /<div\\s+class=["']oil-board["'][^>]*>[\\s\\S]*?<img[^>]*alt=["']([^"']+)["'][^>]*src=["']([^"']+)["'][^>]*>[\\s\\S]*?<div\\s+class=["']oil-price["'][^>]*>([\\s\\S]*?)<\\/div>/gi;
-    let match;
-    const items = [];
-    while ((match = boardRegex.exec(html)) !== null) {
-      const name = match[1].trim();
-      const p = parseFloat(match[3].replace(/[^\\d.]/g, ""));
-      if (!isNaN(p)) {
-        items.push({ name: name, lower: name.toLowerCase(), price: p });
+      const boardRegex = /<div\\s+class=["']oil-board["'][^>]*>[\\s\\S]*?<img[^>]*alt=["']([^"']+)["'][^>]*src=["']([^"']+)["'][^>]*>[\\s\\S]*?<div\\s+class=["']oil-price["'][^>]*>([\\s\\S]*?)<\\/div>/gi;
+      let match;
+      const items = [];
+      while ((match = boardRegex.exec(html)) !== null) {
+        const name = match[1].trim();
+        const p = parseFloat(match[3].replace(/[^\\d.]/g, ""));
+        if (!isNaN(p)) {
+          items.push({ name: name, lower: name.toLowerCase(), price: p });
+        }
+      }
+
+      const b10Found =
+        items.find(function(it) {
+          return (
+            it.lower === "diesel" ||
+            it.lower === "ดีเซล" ||
+            it.lower === "diesel b10" ||
+            it.lower === "ดีเซล b10" ||
+            it.lower === "ultraforce diesel"
+          );
+        }) ||
+        items.find(function(it) {
+          return it.lower.indexOf("b10") !== -1;
+        }) ||
+        items.find(function(it) {
+          return (
+            it.lower.indexOf("diesel") !== -1 &&
+            it.lower.indexOf("b20") === -1 &&
+            it.lower.indexOf("premium") === -1 &&
+            it.lower.indexOf("super") === -1
+          );
+        });
+
+      if (b10Found && b10Found.price > 10 && b10Found.price < 200) {
+        boardFound = true;
+        boardPrice = b10Found.price;
       }
     }
-
-    const b10Found =
-      items.find(function(it) {
-        return (
-          it.lower === "diesel" ||
-          it.lower === "ดีเซล" ||
-          it.lower === "diesel b10" ||
-          it.lower === "ดีเซล b10" ||
-          it.lower === "ultraforce diesel"
-        );
-      }) ||
-      items.find(function(it) {
-        return it.lower.indexOf("b10") !== -1;
-      }) ||
-      items.find(function(it) {
-        return (
-          it.lower.indexOf("diesel") !== -1 &&
-          it.lower.indexOf("b20") === -1 &&
-          it.lower.indexOf("premium") === -1 &&
-          it.lower.indexOf("super") === -1
-        );
-      });
-
-    if (b10Found && b10Found.price > 10 && b10Found.price < 200) {
-      return { found: true, price: b10Found.price, effectiveText: effectiveText };
-    }
-    return { found: false, price: 0, effectiveText: effectiveText };
   } catch (err) {
-    Logger.log("fetchLivePttB10Board_ error: " + err);
-    return { found: false, price: 0, effectiveText: "ล่าสุด" };
+    Logger.log("fetchLivePttB10Board_ board error: " + err);
   }
+
+  // 2) ดึงฐานข้อมูลประกาศราคา PTT OR AJAX (อัปเดตทันทีเมื่อมีปรับราคาระหว่างวัน เช่น 13:00 น. แม้หน้ากระดานหลักยังค้างแคช)
+  const useYear = targetYear || Number(Utilities.formatDate(new Date(), "Asia/Bangkok", "yyyy"));
+  const useTodayIso = todayIso || Utilities.formatDate(new Date(), "Asia/Bangkok", "yyyy-MM-dd");
+  let latestHistRaw = "";
+  let latestHistPrice = 0;
+
+  try {
+    const histRes = UrlFetchApp.fetch("https://www.pttor.com/wp-admin/admin-ajax.php", {
+      method: "post",
+      payload: {
+        action: "fetch_oil_prices",
+        province: "กรุงเทพมหานคร",
+        month: "all",
+        year: String(useYear + 543)
+      },
+      muteHttpExceptions: true
+    });
+    const histJson = JSON.parse(histRes.getContentText());
+    if (histJson && Array.isArray(histJson.data)) {
+      histJson.data.forEach(function(row) {
+        if (!row.priceDate || !Array.isArray(row.priceData)) return;
+        const iso = String(row.priceDate).slice(0, 10);
+        const raw = String(row.priceDate);
+        row.priceData.forEach(function(p) {
+          const t = String(p.OilTypeId || "").trim();
+          if ((t === "ดีเซล" || t === "ดีเซล B10") && typeof p.Price === "number") {
+            const numPrice = Number(p.Price);
+            if (numPrice > 10 && numPrice < 200) {
+              if (!pointRawMap[iso] || raw >= pointRawMap[iso]) {
+                pointRawMap[iso] = raw;
+                pointMap[iso] = numPrice;
+              }
+              if (iso <= useTodayIso && (!latestHistRaw || raw >= latestHistRaw)) {
+                latestHistRaw = raw;
+                latestHistPrice = numPrice;
+              }
+            }
+          }
+        });
+      });
+    }
+  } catch (err) {
+    Logger.log("fetchLivePttB10Board_ history error: " + err);
+  }
+
+  // เลือกแหล่งข้อมูลที่มีเวลาอัปเดตใหม่กว่า (ถ้า AJAX มีประกาศปรับระหว่างวันใหม่กว่ากระดานหลัก ให้ใช้ราคา AJAX ทันที)
+  if (latestHistPrice > 10 && (!boardFound || !boardRaw || latestHistRaw > boardRaw)) {
+    return {
+      found: true,
+      price: latestHistPrice,
+      effectiveText: formatThaiEffectiveFromRaw_(latestHistRaw),
+      pointMap: pointMap
+    };
+  }
+
+  if (boardFound) {
+    return {
+      found: true,
+      price: boardPrice,
+      effectiveText: effectiveText,
+      pointMap: pointMap
+    };
+  }
+
+  return { found: false, price: 0, effectiveText: effectiveText, pointMap: pointMap };
 }
 
 // ============================================================
@@ -2219,8 +2321,8 @@ function checkIntradayPttB10Revision() {
   const now = new Date();
   const tz = "Asia/Bangkok";
   const hour = Number(Utilities.formatDate(now, tz, "HH"));
-  if (hour < 9) {
-    return; // เช็กเฉพาะช่วงหลัง 09:00 น. เป็นต้นไป (หลังรอบเช้า)
+  if (hour < 8) {
+    return; // เช็กเฉพาะช่วงตั้งแต่ 08:00 น. เป็นต้นไป (หลังรอบเช้าส่งแล้ว)
   }
 
   const todayIso = Utilities.formatDate(now, tz, "yyyy-MM-dd");
@@ -2260,7 +2362,7 @@ function checkIntradayPttB10Revision() {
     return; // ยังไม่ได้ส่งรอบเช้าของวันนี้
   }
 
-  const board = fetchLivePttB10Board_();
+  const board = fetchLivePttB10Board_(year, todayIso);
   if (!board.found) {
     Logger.log("ไม่สามารถดึงราคา B10 สดจาก pttor.com ได้ ข้ามรอบเช็กนี้");
     return;
@@ -2317,37 +2419,12 @@ function sendPttB10SheetDirectly(year, month, todayDay, todayIso, props, liveOpt
   const revisionNum = Number(liveOptions.revision || 0);
   const previousPrice = typeof liveOptions.previousPrice === "number" ? liveOptions.previousPrice : null;
 
-  const board = liveOptions.preFetchedBoard || fetchLivePttB10Board_();
+  const board = liveOptions.preFetchedBoard || fetchLivePttB10Board_(year, todayIso);
   const effectiveText = board.effectiveText || "ล่าสุด";
   const liveB10Price = board.found ? board.price : 43.54;
 
-  // ดึงประวัติการปรับราคาในเดือนนั้นจาก PTT OR
-  const pointMap = {};
-  try {
-    const histRes = UrlFetchApp.fetch("https://www.pttor.com/wp-admin/admin-ajax.php", {
-      method: "post",
-      payload: {
-        action: "fetch_oil_prices",
-        province: "กรุงเทพมหานคร",
-        month: "all",
-        year: String(year + 543)
-      },
-      muteHttpExceptions: true
-    });
-    const histJson = JSON.parse(histRes.getContentText());
-    if (histJson && Array.isArray(histJson.data)) {
-      histJson.data.forEach(function(row) {
-        if (!row.priceDate || !Array.isArray(row.priceData)) return;
-        row.priceData.forEach(function(p) {
-          const t = String(p.OilTypeId || "").trim();
-          if ((t === "ดีเซล" || t === "ดีเซล B10") && typeof p.Price === "number") {
-            pointMap[row.priceDate.slice(0, 10)] = Number(p.Price);
-          }
-        });
-      });
-    }
-  } catch (e) {}
-
+  // ใช้ประวัติราคาที่ดึงมาพร้อมกันจาก PTT OR (และเติมราคาวันนี้ให้ตรงล่าสุด)
+  const pointMap = board.pointMap ? Object.assign({}, board.pointMap) : {};
   pointMap[todayIso] = liveB10Price;
   const sortedDates = Object.keys(pointMap).sort();
 
