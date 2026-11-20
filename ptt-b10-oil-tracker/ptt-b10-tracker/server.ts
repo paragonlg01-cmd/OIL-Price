@@ -927,7 +927,7 @@ async function runBackgroundScheduleTick() {
     const schedTotalMins = (schedH || 0) * 60 + (schedM || 0);
     const nowTotalMins = (nowH || 0) * 60 + (nowM || 0);
     const isWithinTriggerWindow =
-      nowTotalMins >= schedTotalMins && nowTotalMins <= schedTotalMins + 15;
+      nowTotalMins >= schedTotalMins && nowTotalMins <= schedTotalMins + 150;
 
     // 1. Specific Dates of Month (01, 10, 20, End of Month)
     if (
