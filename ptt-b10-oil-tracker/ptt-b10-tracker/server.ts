@@ -813,6 +813,34 @@ async function fetchPttHistoricalDieselChanges(gregorianYear: number): Promise<P
   return points;
 }
 
+const THAI_MONTH_NAMES_BY_NUM = [
+  '',
+  'ม.ค.',
+  'ก.พ.',
+  'มี.ค.',
+  'เม.ย.',
+  'พ.ค.',
+  'มิ.ย.',
+  'ก.ค.',
+  'ส.ค.',
+  'ก.ย.',
+  'ต.ค.',
+  'พ.ย.',
+  'ธ.ค.',
+];
+
+function formatThaiEffectiveTextFromRaw(priceDateRaw: string): string {
+  const m = String(priceDateRaw || '').match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{2}:\d{2}))?/);
+  if (!m) return priceDateRaw || 'ล่าสุด';
+  const yr = parseInt(m[1], 10);
+  const mo = parseInt(m[2], 10);
+  const dy = parseInt(m[3], 10);
+  const tm = m[4] || '05:00';
+  const beYr = yr < 2400 ? yr + 543 : yr;
+  const moName = THAI_MONTH_NAMES_BY_NUM[mo] || String(mo);
+  return `ปรับราคาเมื่อ ${dy} ${moName} ${beYr} ${tm}`;
+}
+
 async function buildMonthlyB10Payload(year: number, month: number) {
   const todayIso = getThailandTodayIso();
   const [liveBoard, historyPoints] = await Promise.all([
@@ -822,20 +850,57 @@ async function buildMonthlyB10Payload(year: number, month: number) {
 
   const pointMap = new Map<string, PriceChangePoint>();
   for (const pt of historyPoints) {
-    pointMap.set(pt.isoDate, pt);
+    const existing = pointMap.get(pt.isoDate);
+    if (!existing || String(pt.priceDateRaw) >= String(existing.priceDateRaw)) {
+      pointMap.set(pt.isoDate, pt);
+    }
   }
 
   const boardIsoDate = liveBoard.effectiveIsoDate || todayIso;
-  pointMap.set(boardIsoDate, {
-    isoDate: boardIsoDate,
-    priceDateRaw: `${boardIsoDate}T${liveBoard.effectiveTime || '05:00'}`,
-    price: liveBoard.b10Price,
-    source: 'oilprice-board.aspx',
-  });
+  const boardPriceDateRaw = `${boardIsoDate}T${liveBoard.effectiveTime || '05:00'}`;
+  const existingOnBoardDate = pointMap.get(boardIsoDate);
+  if (
+    !existingOnBoardDate ||
+    boardPriceDateRaw >= String(existingOnBoardDate.priceDateRaw)
+  ) {
+    pointMap.set(boardIsoDate, {
+      isoDate: boardIsoDate,
+      priceDateRaw: boardPriceDateRaw,
+      price: liveBoard.b10Price,
+      source: 'oilprice-board.aspx',
+    });
+  }
 
   const sortedChanges = Array.from(pointMap.values()).sort((a, b) =>
     a.isoDate.localeCompare(b.isoDate)
   );
+
+  // If PTT OR history AJAX already published a newer intraday/today price than cached oilprice-board.aspx,
+  // promote it to effectiveLiveBoard so UI cards, email subjects, and Rev.01 checks all use the real latest price!
+  let latestEffectiveChange: PriceChangePoint | null = null;
+  for (const ch of sortedChanges) {
+    if (ch.isoDate <= todayIso) {
+      if (
+        !latestEffectiveChange ||
+        String(ch.priceDateRaw) >= String(latestEffectiveChange.priceDateRaw)
+      ) {
+        latestEffectiveChange = ch;
+      }
+    }
+  }
+
+  const effectiveLiveBoard =
+    latestEffectiveChange &&
+    String(latestEffectiveChange.priceDateRaw) > boardPriceDateRaw
+      ? {
+          ...liveBoard,
+          b10Price: latestEffectiveChange.price,
+          effectiveIsoDate: latestEffectiveChange.isoDate,
+          effectiveTime:
+            latestEffectiveChange.priceDateRaw.slice(11, 16) || liveBoard.effectiveTime,
+          effectiveText: formatThaiEffectiveTextFromRaw(latestEffectiveChange.priceDateRaw),
+        }
+      : liveBoard;
 
   const daysInMonth = new Date(year, month, 0).getDate();
   const dailySchedule: DailyScheduleItem[] = [];
@@ -856,7 +921,7 @@ async function buildMonthlyB10Payload(year: number, month: number) {
       }
     }
 
-    const effectivePrice = activeChange ? activeChange.price : liveBoard.b10Price;
+    const effectivePrice = activeChange ? activeChange.price : effectiveLiveBoard.b10Price;
     const isChangeDay = sortedChanges.some((c) => c.isoDate === isoDate);
     const priceDelta =
       previousDayPrice !== null ? Number((effectivePrice - previousDayPrice).toFixed(2)) : 0;
@@ -868,7 +933,7 @@ async function buildMonthlyB10Payload(year: number, month: number) {
       isoDate,
       dateFormatted,
       b10Price: effectivePrice,
-      effectiveFrom: activeChange ? activeChange.priceDateRaw : `${boardIsoDate}T05:00`,
+      effectiveFrom: activeChange ? activeChange.priceDateRaw : boardPriceDateRaw,
       source: activeChange ? activeChange.source : 'oilprice-board.aspx',
       isChangeDay,
       priceDelta,
@@ -880,7 +945,7 @@ async function buildMonthlyB10Payload(year: number, month: number) {
     todayIso,
     year,
     month,
-    liveBoard,
+    liveBoard: effectiveLiveBoard,
     priceChanges: sortedChanges.filter((c) => c.isoDate.startsWith(`${year}-`)),
     dailySchedule,
   };
@@ -1161,15 +1226,20 @@ async function sendServerSmtpEmail(
     const targetMonth = overrideMonth || defaultMonth;
 
     const payload = await buildMonthlyB10Payload(targetYear, targetMonth);
+    const todayRow = payload.dailySchedule.find((r) => r.isoDate === todayIso);
+    const currentEffectiveB10Price =
+      todayRow && typeof todayRow.b10Price === 'number'
+        ? todayRow.b10Price
+        : payload.liveBoard.b10Price;
 
     // Extra guard for intraday revisions: abort if live price actually matches last sent price
     if (
       isValidRevisionSend &&
       existingLogToday &&
-      Math.abs(payload.liveBoard.b10Price - existingLogToday.b10Price) < 0.005
+      Math.abs(currentEffectiveB10Price - existingLogToday.b10Price) < 0.005
     ) {
       throw new Error(
-        `ราคาน้ำมัน B10 ล่าสุด (${payload.liveBoard.b10Price.toFixed(2)}) เท่ากับราคาที่ส่งไปแล้ว จึงไม่ส่ง Rev.${String(requestedRevision).padStart(2, '0')} ซ้ำ`
+        `ราคาน้ำมัน B10 ล่าสุด (${currentEffectiveB10Price.toFixed(2)}) เท่ากับราคาที่ส่งไปแล้ว จึงไม่ส่ง Rev.${String(requestedRevision).padStart(2, '0')} ซ้ำ`
       );
     }
 
@@ -1179,7 +1249,7 @@ async function sendServerSmtpEmail(
     const resolvedSubject =
       scheduleStore.customSubject
         .replace('{today}', formattedTodayThai)
-        .replace('{price}', payload.liveBoard.b10Price.toFixed(2))
+        .replace('{price}', currentEffectiveB10Price.toFixed(2))
         .replace('{month}', String(targetMonth).padStart(2, '0'))
         .replace('{year}', String(targetYear)) + revSuffix;
 
@@ -1193,7 +1263,7 @@ async function sendServerSmtpEmail(
             revision: requestedRevision,
             previousPrice:
               revisionOptions?.previousPrice ?? existingLogToday?.b10Price,
-            newPrice: payload.liveBoard.b10Price,
+            newPrice: currentEffectiveB10Price,
           }
         : undefined
     );
@@ -1226,7 +1296,7 @@ async function sendServerSmtpEmail(
       isoDateBangkok: todayIso,
       recipients: [...scheduleStore.recipients],
       subject: resolvedSubject,
-      b10Price: payload.liveBoard.b10Price,
+      b10Price: currentEffectiveB10Price,
       triggerType,
       channel: 'server_smtp',
       ...(requestedRevision > 0
@@ -1292,22 +1362,27 @@ async function runBackgroundScheduleTick(forceRevisionCheck: boolean = false) {
       nowTotalMins >= schedTotalMins && nowTotalMins <= schedTotalMins + 150;
 
     // 0. Intraday Price-Revision Auto-Alert (Rev.01, Rev.02, ...) on scheduled send days
-    // If today's morning email was already sent and PTT updates B10 price later the same day, notify immediately with Rev.01/Rev.02...
+    // Checks BOTH pttor-history AJAX and oilprice-board.aspx so midday adjustments (e.g. 13:00) are caught immediately!
     if (alreadySentToday && existingTodayLog) {
       if (isScheduledDateToday && nowTotalMins >= schedTotalMins) {
         const nowMs = Date.now();
         if (forceRevisionCheck || nowMs - lastIntradayRevisionCheckAt >= 5 * 60 * 1000) {
           lastIntradayRevisionCheckAt = nowMs;
-          const liveBoard = await scrapePttOilPriceBoard();
+          const payload = await buildMonthlyB10Payload(tYear, tMonth);
+          const todayRow = payload.dailySchedule.find((r) => r.isoDate === todayIso);
+          const livePrice =
+            todayRow && typeof todayRow.b10Price === 'number'
+              ? todayRow.b10Price
+              : payload.liveBoard.b10Price;
           if (
-            liveBoard.b10Price > 10 &&
-            liveBoard.b10Price < 200 &&
-            Math.abs(liveBoard.b10Price - existingTodayLog.b10Price) >= 0.005
+            livePrice > 10 &&
+            livePrice < 200 &&
+            Math.abs(livePrice - existingTodayLog.b10Price) >= 0.005
           ) {
             const nextRevision = Number(existingTodayLog.revision || 0) + 1;
             const revTag = `Rev.${String(nextRevision).padStart(2, '0')}`;
             console.log(
-              `[Server Cron] Intraday B10 price revision detected on ${todayIso}: ${existingTodayLog.b10Price} -> ${liveBoard.b10Price}. Sending ${revTag}.`
+              `[Server Cron] Intraday B10 price revision detected on ${todayIso}: ${existingTodayLog.b10Price} -> ${livePrice}. Sending ${revTag}.`
             );
             await sendServerSmtpEmail('auto_price_revision', undefined, undefined, false, {
               revision: nextRevision,
@@ -1340,11 +1415,16 @@ async function runBackgroundScheduleTick(forceRevisionCheck: boolean = false) {
     // 3. On Price Change
     if (mode === 'on_price_change' || mode === 'specific_dates_and_change') {
       if (scheduleStore.sentLogs.length > 0) {
-        const liveBoard = await scrapePttOilPriceBoard();
+        const payload = await buildMonthlyB10Payload(tYear, tMonth);
+        const todayRow = payload.dailySchedule.find((r) => r.isoDate === todayIso);
+        const livePrice =
+          todayRow && typeof todayRow.b10Price === 'number'
+            ? todayRow.b10Price
+            : payload.liveBoard.b10Price;
         const lastLoggedPrice = scheduleStore.sentLogs[0].b10Price;
-        if (liveBoard.b10Price !== lastLoggedPrice) {
+        if (Math.abs(livePrice - lastLoggedPrice) >= 0.005) {
           console.log(
-            `[Server Cron] Price change detected (${lastLoggedPrice} -> ${liveBoard.b10Price}). Sending email.`
+            `[Server Cron] Price change detected (${lastLoggedPrice} -> ${livePrice}). Sending email.`
           );
           await sendServerSmtpEmail('auto_price_change');
         }
