@@ -32,9 +32,19 @@ function readSavedTunnelUrl(): string | null {
   return null;
 }
 
-publicTunnelUrl = readSavedTunnelUrl();
+if (process.env.RENDER_EXTERNAL_URL) {
+  publicTunnelUrl = process.env.RENDER_EXTERNAL_URL;
+} else if (process.env.RENDER) {
+  publicTunnelUrl = 'https://oil-price-myfr.onrender.com';
+} else {
+  publicTunnelUrl = readSavedTunnelUrl();
+}
 
 function ensurePublicTunnel(): void {
+  if (process.env.RENDER || process.env.RENDER_EXTERNAL_URL) {
+    publicTunnelUrl = process.env.RENDER_EXTERNAL_URL || 'https://oil-price-myfr.onrender.com';
+    return;
+  }
   const existingUrl = readSavedTunnelUrl();
   let isRunning = false;
   try {
@@ -191,13 +201,36 @@ const DEFAULT_RECIPIENTS = [
   'Anuwat.K@pttgcgroup.com',
   'Prasit.Su@pttgcgroup.com',
   'Sirilak.S@pttgcgroup.com',
+  'sales@iclthailand.com',
+  'cs@iclthailand.com',
+  'acc@iclthailand.com',
+  'accounting@tssklogistics.co.th',
+  'thaksisi@scgjwd.com',
+  'jarussem@scgjwd.com',
+  'scgjwd_im-ex_chemry@scgjwd.com',
+  'SCGJWD_HLRY@scgjwd.com',
+  'SITANUNL@SCGJWD.COM',
+  'nnt2556@gmail.com',
+  'nuwongsuwit@gmail.com',
+  'phupastrans111@gmail.com',
+  'kornusa@phupastrans.com',
+  'bbnplh@gmail.com',
+  'accounting2@mapt.co.th',
+  'ch.wachakul@mapt.co.th',
+  'p.pramote@mapt.co.th',
+  'nujaree@mapt.co.th',
+  'phuangchompu@mapt.co.th',
+  'acc_ar1@waruka888.com',
+  'acc_ar2@waruka888.com',
+  'ketsuda.p@waruka888.com',
+  'patchrawat.w@waruka888.com',
 ];
 
 const DEFAULT_STORE: ServerScheduleStore = {
   recipients: DEFAULT_RECIPIENTS,
   autoEnabled: true,
   triggerMode: 'specific_dates',
-  scheduledDays: [1, 10, 20],
+  scheduledDays: [10, 15, 20],
   includeEndOfMonth: true,
   scheduledTime: '08:00',
   defaultEvPrice: '9.60',
@@ -209,23 +242,36 @@ const DEFAULT_STORE: ServerScheduleStore = {
   updatedAt: 0,
 };
 
+function deduplicateAndSortSentLogs(logs: SentEmailLog[]): SentEmailLog[] {
+  const byDate = new Map<string, SentEmailLog>();
+  for (const log of logs) {
+    if (!log || !log.isoDateBangkok) continue;
+    const existing = byDate.get(log.isoDateBangkok);
+    if (!existing) {
+      byDate.set(log.isoDateBangkok, log);
+    } else {
+      const existingRecipCount = Array.isArray(existing.recipients) ? existing.recipients.length : 0;
+      const incomingRecipCount = Array.isArray(log.recipients) ? log.recipients.length : 0;
+      if (incomingRecipCount > existingRecipCount) {
+        byDate.set(log.isoDateBangkok, log);
+      }
+    }
+  }
+  return Array.from(byDate.values())
+    .sort((a, b) => b.isoDateBangkok.localeCompare(a.isoDateBangkok))
+    .slice(0, 50);
+}
+
 function loadScheduleStore(): ServerScheduleStore {
   try {
     if (fs.existsSync(SCHEDULE_STORE_PATH)) {
       const raw = fs.readFileSync(SCHEDULE_STORE_PATH, 'utf-8');
       const parsed = JSON.parse(raw);
-      const sentLogs: SentEmailLog[] = Array.isArray(parsed.sentLogs) ? parsed.sentLogs : [];
+      const rawLogs: SentEmailLog[] = Array.isArray(parsed.sentLogs) ? parsed.sentLogs : [];
       const sentDateLocks: Record<string, SentEmailLog> =
         parsed.sentDateLocks && typeof parsed.sentDateLocks === 'object'
           ? { ...parsed.sentDateLocks }
           : {};
-
-      // Backfill sentDateLocks from existing sentLogs so any date already sent is locked
-      for (const log of sentLogs) {
-        if (log?.isoDateBangkok && !sentDateLocks[log.isoDateBangkok]) {
-          sentDateLocks[log.isoDateBangkok] = log;
-        }
-      }
 
       // Automatically scan .sent_locks directory to restore any sent logs from disk
       try {
@@ -237,12 +283,7 @@ function loadScheduleStore(): ServerScheduleStore {
               try {
                 const lockObj = JSON.parse(fs.readFileSync(path.join(lockDirPath, lf), 'utf-8'));
                 if (lockObj && lockObj.isoDateBangkok) {
-                  if (!sentDateLocks[lockObj.isoDateBangkok]) {
-                    sentDateLocks[lockObj.isoDateBangkok] = lockObj;
-                  }
-                  if (!sentLogs.some((l) => l.isoDateBangkok === lockObj.isoDateBangkok)) {
-                    sentLogs.unshift(lockObj);
-                  }
+                  rawLogs.push(lockObj);
                 }
               } catch {}
             }
@@ -250,9 +291,17 @@ function loadScheduleStore(): ServerScheduleStore {
         }
       } catch {}
 
+      const sentLogs = deduplicateAndSortSentLogs(rawLogs);
+
+      // Backfill sentDateLocks from deduplicated sentLogs so any date already sent is locked
+      for (const log of sentLogs) {
+        if (log?.isoDateBangkok) {
+          sentDateLocks[log.isoDateBangkok] = log;
+        }
+      }
+
       const lastSentDateBangkok =
-        parsed.lastSentDateBangkok ||
-        (sentLogs.length > 0 ? sentLogs[0].isoDateBangkok : null);
+        sentLogs.length > 0 ? sentLogs[0].isoDateBangkok : parsed.lastSentDateBangkok || null;
 
       const resolvedSubject =
         !parsed.customSubject || parsed.customSubject === LEGACY_DEFAULT_SUBJECT
@@ -262,9 +311,15 @@ function loadScheduleStore(): ServerScheduleStore {
       const rawRecipients: string[] = Array.isArray(parsed.recipients)
         ? parsed.recipients
         : DEFAULT_RECIPIENTS;
-      const cleanRecipients = rawRecipients
-        .map((r) => String(r || '').trim())
-        .filter((r) => r && r.toLowerCase() !== 'paragon.lg01@gmail.com');
+      const seenLower = new Set<string>();
+      const cleanRecipients: string[] = [];
+      for (const r of rawRecipients) {
+        const clean = String(r || '').trim();
+        if (clean && clean.toLowerCase() !== 'paragon.lg01@gmail.com' && !seenLower.has(clean.toLowerCase())) {
+          seenLower.add(clean.toLowerCase());
+          cleanRecipients.push(clean);
+        }
+      }
 
       return {
         ...DEFAULT_STORE,
@@ -318,18 +373,236 @@ function broadcastSharedState(): void {
   }
 }
 
-function saveScheduleStore(store: ServerScheduleStore): void {
+function getCloudStoreUrl(): string {
+  return (process.env.CLOUD_STORE_URL || '').trim();
+}
+
+function getCloudStoreSecret(): string {
+  return (process.env.CLOUD_STORE_SECRET || 'ptt-b10-cloud-sync-2026').trim();
+}
+
+function buildCompactCloudPayload(store: ServerScheduleStore) {
+  return {
+    recipients: store.recipients,
+    autoEnabled: store.autoEnabled,
+    triggerMode: store.triggerMode,
+    scheduledDays: store.scheduledDays,
+    includeEndOfMonth: store.includeEndOfMonth,
+    scheduledTime: store.scheduledTime,
+    defaultEvPrice: store.defaultEvPrice,
+    customSubject: store.customSubject,
+    customOverrides: store.customOverrides || {},
+    sentLogs: deduplicateAndSortSentLogs(store.sentLogs || []).slice(0, 30),
+    lastSentDateBangkok: store.lastSentDateBangkok || null,
+    updatedAt: store.updatedAt || Date.now(),
+  };
+}
+
+let cloudPushInFlight = false;
+let cloudPushQueuedStore: ServerScheduleStore | null = null;
+
+async function pushToCloudStore(store: ServerScheduleStore): Promise<void> {
+  const url = getCloudStoreUrl();
+  if (!url) return;
+
+  if (cloudPushInFlight) {
+    cloudPushQueuedStore = store;
+    return;
+  }
+
+  cloudPushInFlight = true;
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      redirect: 'follow',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({
+        secret: getCloudStoreSecret(),
+        store: buildCompactCloudPayload(store),
+      }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!res.ok) {
+      console.warn(`[CloudStore] Push failed with HTTP ${res.status}`);
+    } else {
+      const text = await res.text();
+      try {
+        const json = JSON.parse(text);
+        if (json?.success) {
+          console.log('[CloudStore] Synced settings permanently to Google Apps Script');
+        } else {
+          console.warn('[CloudStore] Push rejected:', json?.error || text.slice(0, 120));
+        }
+      } catch {
+        // ignore non-JSON redirect body
+      }
+    }
+  } catch (err) {
+    console.warn('[CloudStore] Push error:', err instanceof Error ? err.message : String(err));
+  } finally {
+    cloudPushInFlight = false;
+    if (cloudPushQueuedStore) {
+      const next = cloudPushQueuedStore;
+      cloudPushQueuedStore = null;
+      pushToCloudStore(next).catch(() => {});
+    }
+  }
+}
+
+let cloudHydrationPromise: Promise<void> | null = null;
+let cloudHydratedOnce = false;
+
+async function hydrateFromCloudStore(): Promise<void> {
+  const url = getCloudStoreUrl();
+  if (!url) {
+    cloudHydratedOnce = true;
+    return;
+  }
+
+  try {
+    const sep = url.includes('?') ? '&' : '?';
+    const fetchUrl = `${url}${sep}secret=${encodeURIComponent(getCloudStoreSecret())}`;
+    const res = await fetch(fetchUrl, {
+      method: 'GET',
+      redirect: 'follow',
+      signal: AbortSignal.timeout(15000),
+    });
+
+    if (!res.ok) {
+      console.warn(`[CloudStore] Hydration HTTP ${res.status}`);
+      return;
+    }
+
+    const data = (await res.json()) as {
+      success?: boolean;
+      hasData?: boolean;
+      store?: Partial<ServerScheduleStore> | null;
+      error?: string;
+    };
+
+    if (!data?.success) {
+      console.warn('[CloudStore] Hydration unauthorized or failed:', data?.error);
+      return;
+    }
+
+    if (!data.hasData || !data.store) {
+      console.log('[CloudStore] Empty cloud store detected — seeding current settings...');
+      await pushToCloudStore(scheduleStore);
+      return;
+    }
+
+    const cloud = data.store;
+    const cloudRecipients = Array.isArray(cloud.recipients)
+      ? Array.from(
+          new Set(
+            cloud.recipients
+              .map((r) => String(r || '').trim())
+              .filter((r) => r && r.toLowerCase() !== 'paragon.lg01@gmail.com')
+          )
+        )
+      : scheduleStore.recipients;
+
+    const cloudDays = Array.isArray(cloud.scheduledDays)
+      ? Array.from(
+          new Set(
+            cloud.scheduledDays
+              .map((d) => Number(d))
+              .filter((d) => Number.isInteger(d) && d >= 1 && d <= 31)
+          )
+        ).sort((a, b) => a - b)
+      : scheduleStore.scheduledDays;
+
+    const mergedLogs = deduplicateAndSortSentLogs([
+      ...(Array.isArray(cloud.sentLogs) ? cloud.sentLogs : []),
+      ...scheduleStore.sentLogs,
+    ]);
+    const mergedLocks: Record<string, SentEmailLog> = { ...(scheduleStore.sentDateLocks || {}) };
+    for (const log of mergedLogs) {
+      if (log?.isoDateBangkok) {
+        mergedLocks[log.isoDateBangkok] = log;
+      }
+    }
+
+    scheduleStore = {
+      ...scheduleStore,
+      recipients: cloudRecipients,
+      autoEnabled: typeof cloud.autoEnabled === 'boolean' ? cloud.autoEnabled : scheduleStore.autoEnabled,
+      triggerMode:
+        typeof cloud.triggerMode === 'string'
+          ? (cloud.triggerMode as AutoTriggerMode)
+          : scheduleStore.triggerMode,
+      scheduledDays: cloudDays,
+      includeEndOfMonth:
+        typeof cloud.includeEndOfMonth === 'boolean'
+          ? cloud.includeEndOfMonth
+          : scheduleStore.includeEndOfMonth,
+      scheduledTime:
+        typeof cloud.scheduledTime === 'string' && cloud.scheduledTime
+          ? cloud.scheduledTime
+          : scheduleStore.scheduledTime,
+      defaultEvPrice:
+        typeof cloud.defaultEvPrice === 'string' && cloud.defaultEvPrice
+          ? cloud.defaultEvPrice
+          : scheduleStore.defaultEvPrice,
+      customSubject:
+        typeof cloud.customSubject === 'string' && cloud.customSubject
+          ? cloud.customSubject
+          : scheduleStore.customSubject,
+      customOverrides:
+        cloud.customOverrides && typeof cloud.customOverrides === 'object'
+          ? cloud.customOverrides
+          : scheduleStore.customOverrides,
+      sentLogs: mergedLogs,
+      sentDateLocks: mergedLocks,
+      lastSentDateBangkok:
+        mergedLogs[0]?.isoDateBangkok || cloud.lastSentDateBangkok || scheduleStore.lastSentDateBangkok,
+      updatedAt: Math.max(
+        typeof cloud.updatedAt === 'number' ? cloud.updatedAt : 0,
+        scheduleStore.updatedAt || 0
+      ),
+    };
+
+    saveScheduleStore(scheduleStore, { skipCloudPush: true });
+    console.log(
+      `[CloudStore] Hydrated from Google Apps Script (${scheduleStore.recipients.length} recipients, days: ${JSON.stringify(scheduleStore.scheduledDays)}, eom: ${scheduleStore.includeEndOfMonth})`
+    );
+  } catch (err) {
+    console.warn('[CloudStore] Hydration error:', err instanceof Error ? err.message : String(err));
+  } finally {
+    cloudHydratedOnce = true;
+  }
+}
+
+function ensureCloudHydrated(): Promise<void> {
+  if (cloudHydratedOnce || !getCloudStoreUrl()) {
+    return Promise.resolve();
+  }
+  if (!cloudHydrationPromise) {
+    cloudHydrationPromise = hydrateFromCloudStore().finally(() => {
+      cloudHydrationPromise = null;
+    });
+  }
+  return cloudHydrationPromise;
+}
+
+function saveScheduleStore(
+  store: ServerScheduleStore,
+  options?: { skipCloudPush?: boolean }
+): void {
   try {
     fs.writeFileSync(SCHEDULE_STORE_PATH, JSON.stringify(store, null, 2), 'utf-8');
     broadcastSharedState();
+    if (!options?.skipCloudPush && getCloudStoreUrl()) {
+      pushToCloudStore(store).catch(() => {});
+    }
   } catch (err) {
     console.error('Failed to save schedule-store.json:', err);
   }
 }
 
 let scheduleStore: ServerScheduleStore = loadScheduleStore();
-// Ensure backfilled sentDateLocks are persisted immediately
-saveScheduleStore(scheduleStore);
+// Ensure backfilled sentDateLocks are persisted locally on boot without overwriting Cloud Store before hydration
+saveScheduleStore(scheduleStore, { skipCloudPush: true });
 
 function getThailandTodayIso(): string {
   const formatter = new Intl.DateTimeFormat('en-CA', {
@@ -694,6 +967,9 @@ const PERMANENT_SENT_DATES = new Set<string>([
   '2026-10-24',
   '2026-10-25',
   '2026-10-26',
+  '2026-10-27',
+  '2026-10-28',
+  '2026-10-29',
 ]);
 
 const LOCK_DIR = path.join(__dirname, '.sent_locks');
@@ -795,7 +1071,8 @@ function formatTimeBangkok(isoTimestamp: string): string {
 async function sendServerSmtpEmail(
   triggerType: SentEmailLog['triggerType'],
   overrideYear?: number,
-  overrideMonth?: number
+  overrideMonth?: number,
+  force: boolean = false
 ): Promise<SentEmailLog> {
   if (!isSmtpConfigured()) {
     throw new Error(
@@ -813,7 +1090,7 @@ async function sendServerSmtpEmail(
 
   // Strict Duplicate-Send Prevention: Check if an email was already sent today or is currently in-flight
   const existingLogToday = getSentLogForDate(todayIso);
-  if (existingLogToday) {
+  if (!force && existingLogToday) {
     const sentTimeStr = formatTimeBangkok(existingLogToday.sentAt);
     throw new Error(
       `ระบบป้องกันการส่งซ้ำ: วันนี้ (${formattedTodayThai}) มีการส่งอีเมลแจ้งเตือนไปแล้วเมื่อเวลา ${sentTimeStr} น. ระบบจึงล็อกไม่ให้ส่งซ้ำอีกในวันนี้`
@@ -898,6 +1175,7 @@ async function sendServerSmtpEmail(
 let isCronRunning = false;
 async function runBackgroundScheduleTick() {
   if (isCronRunning) return;
+  await ensureCloudHydrated();
   if (!scheduleStore.autoEnabled || scheduleStore.recipients.length === 0) return;
   if (!isSmtpConfigured()) return;
 
@@ -920,8 +1198,8 @@ async function runBackgroundScheduleTick() {
 
     const mode = scheduleStore.triggerMode;
 
-    // Check trigger window: current time must be within 15 minutes of scheduledTime (e.g., 08:00 to 08:15)
-    // Prevents rogue sends hours later when server boots or wakes up!
+    // Check trigger window: current time must be >= scheduledTime and within the morning window (up to 10:30 AM)
+    // This allows Google Apps Script or external pings between 08:00-09:30 AM to trigger the send reliably!
     const [schedH, schedM] = scheduleStore.scheduledTime.split(':').map(Number);
     const [nowH, nowM] = nowTime.split(':').map(Number);
     const schedTotalMins = (schedH || 0) * 60 + (schedM || 0);
@@ -964,6 +1242,156 @@ async function runBackgroundScheduleTick() {
     console.error('[Server Cron] Error in background schedule check:', err);
   } finally {
     isCronRunning = false;
+  }
+}
+
+const RENDER_PRODUCTION_URL = 'https://oil-price-myfr.onrender.com';
+let isRenderSyncing = false;
+
+async function syncWithRenderProduction(): Promise<void> {
+  // Avoid self-sync if running on Render itself
+  if (process.env.RENDER || process.env.RENDER_EXTERNAL_URL) return;
+  if (isRenderSyncing) return;
+  isRenderSyncing = true;
+
+  try {
+
+    const res = await fetch(`${RENDER_PRODUCTION_URL}/api/schedule-config`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+    });
+    if (!res.ok) return;
+    const data = (await res.json()) as any;
+    const remoteCfg = data?.config;
+    if (!remoteCfg) return;
+
+    let localChanged = false;
+
+    // 1. Two-way merge recipients (union of local + Render, excluding paragon.lg01@gmail.com)
+    const remoteRecipients: string[] = Array.isArray(remoteCfg.recipients) ? remoteCfg.recipients : [];
+    const seenRecip = new Set(scheduleStore.recipients.map((r) => r.toLowerCase()));
+    const mergedRecipients = [...scheduleStore.recipients];
+    for (const r of remoteRecipients) {
+      const clean = String(r || '').trim();
+      if (
+        clean &&
+        clean.toLowerCase() !== 'paragon.lg01@gmail.com' &&
+        !seenRecip.has(clean.toLowerCase())
+      ) {
+        seenRecip.add(clean.toLowerCase());
+        mergedRecipients.push(clean);
+        localChanged = true;
+      }
+    }
+
+    // 2. Two-way merge sentLogs by isoDateBangkok (filter out phantom unconfirmed 2026-10-30 logs)
+    const remoteLogs: SentEmailLog[] = Array.isArray(remoteCfg.sentLogs)
+      ? remoteCfg.sentLogs.filter(
+          (l: any) =>
+            !(
+              l.isoDateBangkok === '2026-10-30' &&
+              (String(l.id).startsWith('sync_') || String(l.id).startsWith('sent_'))
+            )
+        )
+      : [];
+    const combinedLogs = deduplicateAndSortSentLogs([...scheduleStore.sentLogs, ...remoteLogs]);
+    if (combinedLogs.length !== scheduleStore.sentLogs.length) {
+      localChanged = true;
+    }
+
+    // 3. Sync schedule settings if Render has a newer user edit
+    const remoteUpdatedAt = typeof remoteCfg.updatedAt === 'number' ? remoteCfg.updatedAt : 0;
+    const localUpdatedAt = scheduleStore.updatedAt || 0;
+    let mergedScheduledDays = scheduleStore.scheduledDays;
+    let mergedIncludeEndOfMonth = scheduleStore.includeEndOfMonth;
+    let mergedScheduledTime = scheduleStore.scheduledTime;
+    let nextUpdatedAt = Math.max(localUpdatedAt, remoteUpdatedAt);
+
+    if (remoteUpdatedAt > localUpdatedAt && Array.isArray(remoteCfg.scheduledDays)) {
+      mergedScheduledDays = remoteCfg.scheduledDays;
+      if (typeof remoteCfg.includeEndOfMonth === 'boolean') {
+        mergedIncludeEndOfMonth = remoteCfg.includeEndOfMonth;
+      }
+      if (typeof remoteCfg.scheduledTime === 'string') {
+        mergedScheduledTime = remoteCfg.scheduledTime;
+      }
+      localChanged = true;
+    }
+
+    if (localChanged) {
+      const updatedLocks = { ...(scheduleStore.sentDateLocks || {}) };
+      for (const l of combinedLogs) {
+        if (l?.isoDateBangkok) updatedLocks[l.isoDateBangkok] = l;
+      }
+      scheduleStore = {
+        ...scheduleStore,
+        recipients: mergedRecipients,
+        scheduledDays: mergedScheduledDays,
+        includeEndOfMonth: mergedIncludeEndOfMonth,
+        scheduledTime: mergedScheduledTime,
+        sentLogs: combinedLogs,
+        sentDateLocks: updatedLocks,
+        lastSentDateBangkok: combinedLogs[0]?.isoDateBangkok || scheduleStore.lastSentDateBangkok,
+        updatedAt: nextUpdatedAt,
+      };
+      saveScheduleStore(scheduleStore);
+    }
+
+    // 4. Check if Render is missing any recipients, scheduledDays, or sentLogs (e.g. after Render Free Tier spin-down)
+    const remoteRecipLower = new Set(remoteRecipients.map((r) => String(r || '').trim().toLowerCase()));
+    const renderMissingRecipients = scheduleStore.recipients.some(
+      (r) => !remoteRecipLower.has(r.toLowerCase())
+    );
+
+    const remoteTop8Dates = remoteLogs
+      .slice(0, 8)
+      .map((l) => `${l?.isoDateBangkok}:${Array.isArray(l?.recipients) ? l.recipients.length : 0}`)
+      .join('|');
+    const localTop8Dates = scheduleStore.sentLogs
+      .slice(0, 8)
+      .map((l) => `${l?.isoDateBangkok}:${Array.isArray(l?.recipients) ? l.recipients.length : 0}`)
+      .join('|');
+    const renderNeedsLogOrderFix = remoteTop8Dates !== localTop8Dates;
+
+    const logsToPushToRender = renderNeedsLogOrderFix
+      ? [...scheduleStore.sentLogs]
+          .slice(0, 9)
+          .sort((a, b) => a.isoDateBangkok.localeCompare(b.isoDateBangkok))
+          .map((l) => ({
+            ...l,
+            id: `sync_${l.isoDateBangkok.replace(/-/g, '')}_${Date.now()}`,
+          }))
+      : [];
+
+    const remoteDaysStr = JSON.stringify(
+      Array.isArray(remoteCfg.scheduledDays) ? [...remoteCfg.scheduledDays].sort((a, b) => a - b) : []
+    );
+    const localDaysStr = JSON.stringify([...scheduleStore.scheduledDays].sort((a, b) => a - b));
+    const renderNeedsSchedulePush = remoteDaysStr !== localDaysStr && localUpdatedAt >= remoteUpdatedAt;
+
+    if (renderMissingRecipients || logsToPushToRender.length > 0 || renderNeedsSchedulePush) {
+      await fetch(`${RENDER_PRODUCTION_URL}/api/schedule-config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          recipients: scheduleStore.recipients,
+          autoEnabled: scheduleStore.autoEnabled,
+          triggerMode: scheduleStore.triggerMode,
+          scheduledDays: scheduleStore.scheduledDays,
+          includeEndOfMonth: scheduleStore.includeEndOfMonth,
+          scheduledTime: scheduleStore.scheduledTime,
+          defaultEvPrice: scheduleStore.defaultEvPrice,
+          customSubject: scheduleStore.customSubject,
+          ...(logsToPushToRender.length > 0 ? { sentLogs: logsToPushToRender } : {}),
+          updatedAt: Math.max(Date.now(), scheduleStore.updatedAt || 0),
+          fromRenderSync: true,
+        }),
+      });
+    }
+  } catch (err) {
+    // Ignore transient network errors when pinging Render
+  } finally {
+    isRenderSyncing = false;
   }
 }
 
@@ -1220,23 +1648,143 @@ async function startServer() {
 
   // Dedicated Binary ZIP Download Endpoint
   app.get('/api/download-zip', (_req, res) => {
-    const zipPath = path.join(__dirname, 'public', 'ptt-b10-oil-tracker.zip');
-    if (fs.existsSync(zipPath)) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    const candidates = [
+      path.join(__dirname, 'public', 'ptt-b10-oil-tracker.zip'),
+      path.join(process.cwd(), 'public', 'ptt-b10-oil-tracker.zip'),
+    ];
+    let foundPath = candidates.find((p) => fs.existsSync(p));
+    if (!foundPath) {
+      try {
+        const targetZip = path.join(process.cwd(), 'public', 'ptt-b10-oil-tracker.zip');
+        fs.mkdirSync(path.dirname(targetZip), { recursive: true });
+        execSync(
+          `python3 -c 'import os,zipfile;ex={"node_modules",".git","dist",".next",".sent_locks",".aistudio"};zf=zipfile.ZipFile("public/ptt-b10-oil-tracker.zip","w",zipfile.ZIP_DEFLATED);[zf.write(os.path.join(r,f),os.path.relpath(os.path.join(r,f),".")) for r,ds,fs in os.walk(".") if not ds.__setitem__(slice(None),[d for d in ds if d not in ex]) for f in fs if f!="ptt-b10-oil-tracker.zip"];zf.close()'`,
+          { cwd: process.cwd() }
+        );
+        if (fs.existsSync(targetZip)) {
+          foundPath = targetZip;
+        }
+      } catch (err) {
+        console.error('[ZIP] Failed to build zip on the fly:', err);
+      }
+    }
+
+    if (foundPath && fs.existsSync(foundPath)) {
       res.setHeader('Content-Type', 'application/zip');
       res.setHeader('Content-Disposition', 'attachment; filename="ptt-b10-oil-tracker.zip"');
-      res.sendFile(zipPath);
+      res.sendFile(foundPath);
     } else {
       res.status(404).send('ZIP file not found');
     }
   });
 
+  // Direct single-file download or copy for src/App.tsx so user can update GitHub in 10 seconds
+  app.get('/api/download-app-tsx', (_req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    const appTsxPath = path.join(process.cwd(), 'src', 'App.tsx');
+    if (fs.existsSync(appTsxPath)) {
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment; filename="App.tsx"');
+      res.sendFile(appTsxPath);
+    } else {
+      res.status(404).send('App.tsx not found');
+    }
+  });
+
+  app.get('/api/download-email-manager-tsx', (_req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    const filePath = path.join(process.cwd(), 'src', 'components', 'EmailAlertManager.tsx');
+    if (fs.existsSync(filePath)) {
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment; filename="EmailAlertManager.tsx"');
+      res.sendFile(filePath);
+    } else {
+      res.status(404).send('EmailAlertManager.tsx not found');
+    }
+  });
+
+  app.get('/api/download-server-ts', (_req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    const filePath = path.join(process.cwd(), 'server.ts');
+    if (fs.existsSync(filePath)) {
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment; filename="server.ts"');
+      res.sendFile(filePath);
+    } else {
+      res.status(404).send('server.ts not found');
+    }
+  });
+
+  app.get('/render-update', (_req, res) => {
+    const appTsxPath = path.join(process.cwd(), 'src', 'App.tsx');
+    const appTsxContent = fs.existsSync(appTsxPath) ? fs.readFileSync(appTsxPath, 'utf-8') : '';
+    const html = `<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>อัปเดตโค้ดสำหรับ Render (เดือนปัจจุบันอัตโนมัติ)</title>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; background: #f8fafc; color: #0f172a; margin: 0; padding: 24px; }
+    .card { max-width: 760px; margin: 0 auto; background: #fff; border: 1px solid #e2e8f0; border-radius: 14px; padding: 24px; box-shadow: 0 4px 16px rgba(15,23,42,0.05); }
+    h1 { font-size: 20px; margin: 0 0 8px; color: #1d3c85; }
+    p { font-size: 14px; line-height: 1.6; color: #334155; margin: 0 0 16px; }
+    .btn-row { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 20px; }
+    .btn { display: inline-flex; align-items: center; gap: 8px; padding: 12px 18px; border-radius: 10px; font-weight: 700; font-size: 14px; text-decoration: none; cursor: pointer; border: none; }
+    .btn-primary { background: #059669; color: #fff; }
+    .btn-primary:hover { background: #047857; }
+    .btn-blue { background: #1d3c85; color: #fff; }
+    .btn-blue:hover { background: #152c63; }
+    .btn-outline { background: #f1f5f9; color: #0f172a; border: 1px solid #cbd5e1; }
+    textarea { width: 100%; height: 260px; font-family: monospace; font-size: 12px; padding: 12px; border-radius: 8px; border: 1px solid #cbd5e1; background: #f8fafc; box-sizing: border-box; }
+    .steps { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 10px; padding: 14px 18px; margin-bottom: 18px; font-size: 13.5px; line-height: 1.7; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>ดาวน์โหลดโค้ดสำหรับอัปเดต Render (ตั้งค่าเดือน/ปีปัจจุบันอัตโนมัติ)</h1>
+    <p>หน้านี้เชื่อมต่อตรงจากเซิร์ฟเวอร์ AI Studio คุณสามารถเลือกดาวน์โหลดเป็นไฟล์ <strong>ZIP ทั้งโปรเจกต์</strong> หรือ <strong>คัดลอกเฉพาะไฟล์ src/App.tsx</strong> ไปวางทับบน GitHub ได้ทันที</p>
+    <div class="steps">
+      <strong>วิธีที่เร็วที่สุด (ใช้เวลา 15 วินาที ไม่ต้องแตกไฟล์ ZIP):</strong><br/>
+      1. กดปุ่ม <strong>"คัดลอกโค้ด src/App.tsx"</strong> ด้านล่าง<br/>
+      2. เปิด GitHub ของคุณ ไปที่ไฟล์ <code>src/App.tsx</code> &rarr; กดรูปดินสอ (Edit) &rarr; ลบของเดิมแล้ววาง (Ctrl+V) &rarr; กด <strong>Commit changes...</strong><br/>
+      3. รอ Render อัปเดตประมาณ 1-2 นาที หน้าเว็บ <code>oil-price-myfr.onrender.com</code> จะเปลี่ยนเป็น <strong>พฤศจิกายน (11) / 2026</strong> อัตโนมัติทันที!
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-blue" onclick="copyCode()" id="copyBtn">📋 คัดลอกโค้ด src/App.tsx (แนะนำ)</button>
+      <a class="btn btn-primary" href="/api/download-zip" download="ptt-b10-oil-tracker.zip">📦 ดาวน์โหลดไฟล์ ZIP ทั้งโปรเจกต์</a>
+      <a class="btn btn-outline" href="/api/download-app-tsx" download="App.tsx">⬇️ ดาวน์โหลดเฉพาะไฟล์ App.tsx</a>
+    </div>
+    <textarea id="codeBox" readonly>${appTsxContent.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</textarea>
+  </div>
+  <script>
+    function copyCode() {
+      const box = document.getElementById('codeBox');
+      box.select();
+      navigator.clipboard.writeText(box.value).then(() => {
+        const btn = document.getElementById('copyBtn');
+        btn.textContent = '✅ คัดลอก src/App.tsx เรียบร้อยแล้ว! นำไปวางใน GitHub ได้เลย';
+        btn.style.background = '#059669';
+      });
+    }
+  </script>
+</body>
+</html>`;
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
+  });
+
+
   // 2. Get Server-Side Schedule Config & Status
-  app.get('/api/schedule-config', (_req, res) => {
+  app.get('/api/schedule-config', async (_req, res) => {
+    await ensureCloudHydrated();
     const todayIso = getThailandTodayIso();
     const sentTodayLog = getSentLogForDate(todayIso);
     res.json({
       success: true,
       publicTunnelUrl: publicTunnelUrl || readSavedTunnelUrl(),
+      cloudStoreConfigured: Boolean(getCloudStoreUrl()),
       smtpConfigured: isSmtpConfigured(),
       smtpUser: process.env.SMTP_USER?.trim() || '',
       smtpHost: process.env.SMTP_HOST?.trim() || 'smtp.gmail.com',
@@ -1249,7 +1797,8 @@ async function startServer() {
   });
 
   // 3. Update Server-Side Schedule Config (never removes existing recipients or sentDateLocks)
-  app.post('/api/schedule-config', (req, res) => {
+  app.post('/api/schedule-config', async (req, res) => {
+    await ensureCloudHydrated();
     const body = req.body || {};
 
     let mergedRecipients = [...scheduleStore.recipients];
@@ -1273,21 +1822,21 @@ async function startServer() {
     }
 
     // Merge sentLogs & sentDateLocks non-destructively so duplicate-prevention lock is never lost
-    const mergedSentLogs = [...scheduleStore.sentLogs];
-    const existingLogIds = new Set(mergedSentLogs.map((l) => l.id));
+    const rawCombinedLogs = [...scheduleStore.sentLogs];
+    if (Array.isArray(body.sentLogs)) {
+      for (const incomingLog of body.sentLogs) {
+        if (incomingLog && incomingLog.isoDateBangkok) {
+          rawCombinedLogs.push(incomingLog);
+        }
+      }
+    }
+    const mergedSentLogs = deduplicateAndSortSentLogs(rawCombinedLogs);
     const mergedDateLocks: Record<string, SentEmailLog> = {
       ...(scheduleStore.sentDateLocks || {}),
     };
-
-    if (Array.isArray(body.sentLogs)) {
-      for (const incomingLog of body.sentLogs) {
-        if (incomingLog && incomingLog.id && !existingLogIds.has(incomingLog.id)) {
-          mergedSentLogs.unshift(incomingLog);
-          existingLogIds.add(incomingLog.id);
-        }
-        if (incomingLog?.isoDateBangkok && !mergedDateLocks[incomingLog.isoDateBangkok]) {
-          mergedDateLocks[incomingLog.isoDateBangkok] = incomingLog;
-        }
+    for (const log of mergedSentLogs) {
+      if (log?.isoDateBangkok) {
+        mergedDateLocks[log.isoDateBangkok] = log;
       }
     }
 
@@ -1322,7 +1871,7 @@ async function startServer() {
 
     const nextUpdatedAt =
       hasScheduleFields && shouldApplyScheduleFields
-        ? Math.max(incomingUpdatedAt, Date.now())
+        ? Math.max(currentUpdatedAt + 1, incomingUpdatedAt, Date.now())
         : currentUpdatedAt;
 
     scheduleStore = {
@@ -1354,11 +1903,15 @@ async function startServer() {
       typeof body.customOverrides === 'object'
         ? { customOverrides: body.customOverrides }
         : {}),
-      sentLogs: mergedSentLogs.slice(0, 50),
+      sentLogs: mergedSentLogs,
       sentDateLocks: mergedDateLocks,
+      lastSentDateBangkok: mergedSentLogs.length > 0 ? mergedSentLogs[0].isoDateBangkok : scheduleStore.lastSentDateBangkok,
       updatedAt: nextUpdatedAt,
     };
     saveScheduleStore(scheduleStore);
+    if (!body.fromRenderSync) {
+      syncWithRenderProduction().catch(() => {});
+    }
 
     const todayIso = getThailandTodayIso();
     const sentTodayLog = getSentLogForDate(todayIso);
@@ -1414,18 +1967,21 @@ async function startServer() {
   });
 
   // 3a-2. Update Cell Overrides or Default EV Price Across All Devices in Real Time
-  app.post('/api/cell-overrides', (req, res) => {
+  app.post('/api/cell-overrides', async (req, res) => {
+    await ensureCloudHydrated();
     const body = req.body || {};
     if (body.customOverrides && typeof body.customOverrides === 'object') {
       scheduleStore = {
         ...scheduleStore,
         customOverrides: body.customOverrides,
+        updatedAt: Math.max((scheduleStore.updatedAt || 0) + 1, Date.now()),
       };
     }
     if (typeof body.defaultEvPrice === 'string') {
       scheduleStore = {
         ...scheduleStore,
         defaultEvPrice: body.defaultEvPrice,
+        updatedAt: Math.max((scheduleStore.updatedAt || 0) + 1, Date.now()),
       };
     }
     saveScheduleStore(scheduleStore);
@@ -1436,7 +1992,8 @@ async function startServer() {
   });
 
   // 3b. Explicitly Add Recipient Email(s) (Permanent until explicitly deleted)
-  app.post('/api/recipients/add', (req, res) => {
+  app.post('/api/recipients/add', async (req, res) => {
+    await ensureCloudHydrated();
     const incoming: string[] = Array.isArray(req.body?.emails)
       ? req.body.emails
       : typeof req.body?.email === 'string'
@@ -1457,8 +2014,10 @@ async function startServer() {
     scheduleStore = {
       ...scheduleStore,
       recipients: updated,
+      updatedAt: Math.max((scheduleStore.updatedAt || 0) + 1, Date.now()),
     };
     saveScheduleStore(scheduleStore);
+    syncWithRenderProduction().catch(() => {});
 
     res.json({
       success: true,
@@ -1468,7 +2027,8 @@ async function startServer() {
   });
 
   // 3c. Explicitly Delete a Single Recipient Email (ONLY way an email is removed)
-  app.post('/api/recipients/remove', (req, res) => {
+  app.post('/api/recipients/remove', async (req, res) => {
+    await ensureCloudHydrated();
     const target = String(req.body?.email || '').trim().toLowerCase();
     if (!target) {
       res.status(400).json({ success: false, error: 'กรุณาระบุอีเมลที่ต้องการลบ' });
@@ -1478,6 +2038,7 @@ async function startServer() {
     scheduleStore = {
       ...scheduleStore,
       recipients: scheduleStore.recipients.filter((e) => e.toLowerCase() !== target),
+      updatedAt: Math.max((scheduleStore.updatedAt || 0) + 1, Date.now()),
     };
     saveScheduleStore(scheduleStore);
 
@@ -1490,10 +2051,13 @@ async function startServer() {
 
   // 4. Trigger Immediate Server-Side SMTP Send (Protected by Daily Duplicate Lock)
   app.post('/api/send-server-email', async (req, res) => {
+    await ensureCloudHydrated();
     try {
       const year = req.body?.year ? Number(req.body.year) : undefined;
       const month = req.body?.month ? Number(req.body.month) : undefined;
-      const log = await sendServerSmtpEmail('manual', year, month);
+      const force = req.body?.force === true;
+      const log = await sendServerSmtpEmail('manual', year, month, force);
+      syncWithRenderProduction().catch(() => {});
       res.json({
         success: true,
         log,
@@ -1512,7 +2076,8 @@ async function startServer() {
   });
 
   // 4b. Record Sent Email Log from Google Apps Script or External Sender
-  app.post('/api/log-sent-email', (req, res) => {
+  app.post('/api/log-sent-email', async (req, res) => {
+    await ensureCloudHydrated();
     const body = req.body || {};
     const todayIso = getThailandTodayIso();
     const isoDateBangkok = body.isoDateBangkok || todayIso;
@@ -1529,18 +2094,18 @@ async function startServer() {
     };
 
     const existingLogs = scheduleStore.sentLogs || [];
-    if (!existingLogs.some((l) => l.id === newLog.id || (l.isoDateBangkok === isoDateBangkok && l.channel === newLog.channel))) {
-      const updatedLogs = [newLog, ...existingLogs].slice(0, 50);
-      const updatedLocks = { ...(scheduleStore.sentDateLocks || {}), [isoDateBangkok]: newLog };
-      scheduleStore = {
-        ...scheduleStore,
-        sentLogs: updatedLogs,
-        sentDateLocks: updatedLocks,
-        lastSentDateBangkok: isoDateBangkok,
-      };
-      saveScheduleStore(scheduleStore);
-    }
+    const updatedLogs = deduplicateAndSortSentLogs([newLog, ...existingLogs]);
+    const updatedLocks = { ...(scheduleStore.sentDateLocks || {}), [isoDateBangkok]: newLog };
+    scheduleStore = {
+      ...scheduleStore,
+      sentLogs: updatedLogs,
+      sentDateLocks: updatedLocks,
+      lastSentDateBangkok: updatedLogs[0]?.isoDateBangkok || isoDateBangkok,
+      updatedAt: Math.max((scheduleStore.updatedAt || 0) + 1, Date.now()),
+    };
+    saveScheduleStore(scheduleStore);
     recordPermanentDateLock(isoDateBangkok, newLog);
+    syncWithRenderProduction().catch(() => {});
 
     res.json({
       success: true,
@@ -1551,21 +2116,32 @@ async function startServer() {
 
   // 5. External Cron / Google Apps Script Wake-Up & Check Endpoint
   app.get('/api/cron-wake', async (_req, res) => {
+    await ensureCloudHydrated();
     await runBackgroundScheduleTick();
     const todayIso = getThailandTodayIso();
     const sentTodayLog = getSentLogForDate(todayIso);
     res.json({
       success: true,
+      cloudStoreConfigured: Boolean(getCloudStoreUrl()),
       serverTimeBangkok: `${todayIso} ${getThailandNowTime()}`,
       sentToday: Boolean(sentTodayLog),
       sentTodayLog,
     });
   });
 
+  // Hydrate permanent Cloud Store on server boot (e.g. Render Free Tier cold start)
+  ensureCloudHydrated().catch(() => {});
+
   // Background periodic schedule checker (ONLY checks during scheduled window, never immediately on boot)
   setInterval(() => {
     runBackgroundScheduleTick();
   }, 30000);
+
+  // Two-Way Render Sync & Keep-Alive Guardian (pings Render every 2 minutes so Render never sleeps and both apps stay 100% in sync)
+  syncWithRenderProduction().catch(() => {});
+  setInterval(() => {
+    syncWithRenderProduction().catch(() => {});
+  }, 120000);
 
   // Ensure Public HTTPS Cloudflare Tunnel is running and monitored
   ensurePublicTunnel();
