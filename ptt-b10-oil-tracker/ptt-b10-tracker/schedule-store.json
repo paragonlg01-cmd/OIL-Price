@@ -4,218 +4,72 @@
     "Ronpol.P@pttgcgroup.com",
     "Anuwat.K@pttgcgroup.com",
     "Prasit.Su@pttgcgroup.com",
-    "Sirilak.S@pttgcgroup.com"
+    "Sirilak.S@pttgcgroup.com",
+    "sales@iclthailand.com",
+    "cs@iclthailand.com",
+    "acc@iclthailand.com",
+    "accounting@tssklogistics.co.th",
+    "thaksisi@scgjwd.com",
+    "jarussem@scgjwd.com",
+    "scgjwd_im-ex_chemry@scgjwd.com",
+    "SCGJWD_HLRY@scgjwd.com",
+    "SITANUNL@SCGJWD.COM",
+    "nnt2556@gmail.com",
+    "nuwongsuwit@gmail.com",
+    "phupastrans111@gmail.com",
+    "kornusa@phupastrans.com",
+    "bbnplh@gmail.com",
+    "accounting2@mapt.co.th",
+    "ch.wachakul@mapt.co.th",
+    "p.pramote@mapt.co.th",
+    "nujaree@mapt.co.th",
+    "phuangchompu@mapt.co.th",
+    "acc_ar1@waruka888.com",
+    "acc_ar2@waruka888.com",
+    "ketsuda.p@waruka888.com",
+    "patchrawat.w@waruka888.com"
   ],
   "autoEnabled": true,
   "triggerMode": "specific_dates",
-  "scheduledDays": [
-    22,
-    23,
-    24,
-    25,
-    26
-  ],
-  "includeEndOfMonth": false,
+  "scheduledDays": [10, 15, 20],
+  "includeEndOfMonth": true,
   "scheduledTime": "08:00",
   "defaultEvPrice": "9.60",
   "customSubject": "อัปเดตราคาน้ำมันดีเซล B10 และ EV Price ประจำวันที่ {today}",
   "customOverrides": {},
   "sentLogs": [
     {
-      "id": "gas_20261026_080000",
-      "sentAt": "2026-10-26T01:00:00.000Z",
-      "isoDateBangkok": "2026-10-26",
-      "recipients": [
-        "Chawalit.M@pttgcgroup.com",
-        "Ronpol.P@pttgcgroup.com",
-        "Anuwat.K@pttgcgroup.com",
-        "Prasit.Su@pttgcgroup.com",
-        "Sirilak.S@pttgcgroup.com"
-      ],
-      "subject": "อัปเดตราคาน้ำมันดีเซล B10 และ EV Price ประจำวันที่ 26/10/2026",
-      "b10Price": 43.54,
+      "id": "sent_20261120",
+      "sentAt": "2026-11-20T01:47:01.272Z",
+      "isoDateBangkok": "2026-11-20",
+      "recipients": ["Chawalit.M@pttgcgroup.com","Ronpol.P@pttgcgroup.com","Anuwat.K@pttgcgroup.com","Prasit.Su@pttgcgroup.com","Sirilak.S@pttgcgroup.com","sales@iclthailand.com","cs@iclthailand.com","acc@iclthailand.com","accounting@tssklogistics.co.th","thaksisi@scgjwd.com","jarussem@scgjwd.com","scgjwd_im-ex_chemry@scgjwd.com","SCGJWD_HLRY@scgjwd.com","SITANUNL@SCGJWD.COM","nnt2556@gmail.com","nuwongsuwit@gmail.com","phupastrans111@gmail.com","kornusa@phupastrans.com","bbnplh@gmail.com","accounting2@mapt.co.th","ch.wachakul@mapt.co.th","p.pramote@mapt.co.th","nujaree@mapt.co.th","phuangchompu@mapt.co.th","acc_ar1@waruka888.com","acc_ar2@waruka888.com","ketsuda.p@waruka888.com","patchrawat.w@waruka888.com"],
+      "subject": "อัปเดตราคาน้ำมันดีเซล B10 และ EV Price ประจำวันที่ 20/11/2026",
+      "b10Price": 39.99,
       "triggerType": "auto_scheduled_date",
       "channel": "server_smtp"
     },
     {
-      "id": "gas_1792937112887_80xng",
-      "sentAt": "2026-10-25T14:05:12.664Z",
-      "isoDateBangkok": "2026-10-25",
-      "recipients": [
-        "Chawalit.M@pttgcgroup.com",
-        "Ronpol.P@pttgcgroup.com",
-        "Anuwat.K@pttgcgroup.com",
-        "Prasit.Su@pttgcgroup.com",
-        "Sirilak.S@pttgcgroup.com"
-      ],
-      "subject": "อัปเดตราคาน้ำมันดีเซล B10 และ EV Price ประจำวันที่ 25/10/2026",
-      "b10Price": 43.54,
+      "id": "sent_20261115",
+      "sentAt": "2026-11-15T02:28:26.758Z",
+      "isoDateBangkok": "2026-11-15",
+      "recipients": ["Chawalit.M@pttgcgroup.com","Ronpol.P@pttgcgroup.com","Anuwat.K@pttgcgroup.com","Prasit.Su@pttgcgroup.com","Sirilak.S@pttgcgroup.com","sales@iclthailand.com","cs@iclthailand.com","acc@iclthailand.com","accounting@tssklogistics.co.th","thaksisi@scgjwd.com","jarussem@scgjwd.com","scgjwd_im-ex_chemry@scgjwd.com","SCGJWD_HLRY@scgjwd.com","SITANUNL@SCGJWD.COM","nnt2556@gmail.com","nuwongsuwit@gmail.com","phupastrans111@gmail.com","kornusa@phupastrans.com","bbnplh@gmail.com","accounting2@mapt.co.th","ch.wachakul@mapt.co.th","p.pramote@mapt.co.th","nujaree@mapt.co.th","phuangchompu@mapt.co.th","acc_ar1@waruka888.com","acc_ar2@waruka888.com","ketsuda.p@waruka888.com","patchrawat.w@waruka888.com"],
+      "subject": "อัปเดตราคาน้ำมันดีเซล B10 และ EV Price ประจำวันที่ 15/11/2026",
+      "b10Price": 40.79,
       "triggerType": "auto_scheduled_date",
       "channel": "server_smtp"
     },
     {
-      "id": "gas_20261024_080000",
-      "sentAt": "2026-10-24T01:00:00.000Z",
-      "isoDateBangkok": "2026-10-24",
-      "recipients": [
-        "Chawalit.M@pttgcgroup.com",
-        "Ronpol.P@pttgcgroup.com",
-        "Anuwat.K@pttgcgroup.com",
-        "Prasit.Su@pttgcgroup.com",
-        "Sirilak.S@pttgcgroup.com"
-      ],
-      "subject": "อัปเดตราคาน้ำมันดีเซล B10 และ EV Price ประจำวันที่ 24/10/2026",
-      "b10Price": 43.54,
-      "triggerType": "auto_scheduled_date",
-      "channel": "server_smtp"
-    },
-    {
-      "id": "gas_20261023_080000",
-      "sentAt": "2026-10-23T01:00:00.000Z",
-      "isoDateBangkok": "2026-10-23",
-      "recipients": [
-        "Chawalit.M@pttgcgroup.com",
-        "Ronpol.P@pttgcgroup.com",
-        "Anuwat.K@pttgcgroup.com",
-        "Prasit.Su@pttgcgroup.com",
-        "Sirilak.S@pttgcgroup.com"
-      ],
-      "subject": "อัปเดตราคาน้ำมันดีเซล B10 และ EV Price ประจำวันที่ 23/10/2026",
-      "b10Price": 43.54,
-      "triggerType": "auto_scheduled_date",
-      "channel": "server_smtp"
-    },
-    {
-      "id": "<1616180d-6fd6-9c1c-0480-34fd43b08f5f@gmail.com>",
-      "sentAt": "2026-10-22T01:42:01.384Z",
-      "isoDateBangkok": "2026-10-22",
-      "recipients": [
-        "Chawalit.M@pttgcgroup.com",
-        "Ronpol.P@pttgcgroup.com",
-        "Anuwat.K@pttgcgroup.com",
-        "Prasit.Su@pttgcgroup.com",
-        "Sirilak.S@pttgcgroup.com"
-      ],
-      "subject": "อัปเดตราคาน้ำมันดีเซล B10 และ EV Price ประจำวันที่ 22/10/2026",
-      "b10Price": 43.54,
-      "triggerType": "auto_scheduled_date",
-      "channel": "server_smtp"
-    },
-    {
-      "id": "gas_20261021_080000",
-      "sentAt": "2026-10-21T01:00:00.000Z",
-      "isoDateBangkok": "2026-10-21",
-      "recipients": [
-        "Chawalit.M@pttgcgroup.com",
-        "Ronpol.P@pttgcgroup.com",
-        "Anuwat.K@pttgcgroup.com",
-        "Prasit.Su@pttgcgroup.com",
-        "Sirilak.S@pttgcgroup.com"
-      ],
-      "subject": "อัปเดตราคาน้ำมันดีเซล B10 และ EV Price ประจำวันที่ 21/10/2026",
-      "b10Price": 43.54,
+      "id": "sent_20261110",
+      "sentAt": "2026-11-10T01:12:38.325Z",
+      "isoDateBangkok": "2026-11-10",
+      "recipients": ["Chawalit.M@pttgcgroup.com","Ronpol.P@pttgcgroup.com","Anuwat.K@pttgcgroup.com","Prasit.Su@pttgcgroup.com","Sirilak.S@pttgcgroup.com","sales@iclthailand.com","cs@iclthailand.com","acc@iclthailand.com","accounting@tssklogistics.co.th","thaksisi@scgjwd.com","jarussem@scgjwd.com","scgjwd_im-ex_chemry@scgjwd.com","SCGJWD_HLRY@scgjwd.com","SITANUNL@SCGJWD.COM","nnt2556@gmail.com","nuwongsuwit@gmail.com","phupastrans111@gmail.com","kornusa@phupastrans.com","bbnplh@gmail.com","accounting2@mapt.co.th","ch.wachakul@mapt.co.th","p.pramote@mapt.co.th","nujaree@mapt.co.th","phuangchompu@mapt.co.th","acc_ar1@waruka888.com","acc_ar2@waruka888.com","ketsuda.p@waruka888.com","patchrawat.w@waruka888.com"],
+      "subject": "อัปเดตราคาน้ำมันดีเซล B10 และ EV Price ประจำวันที่ 10/11/2026",
+      "b10Price": 41.79,
       "triggerType": "auto_scheduled_date",
       "channel": "server_smtp"
     }
   ],
-  "sentDateLocks": {
-    "2026-10-21": {
-      "id": "gas_20261021_080000",
-      "sentAt": "2026-10-21T01:00:00.000Z",
-      "isoDateBangkok": "2026-10-21",
-      "recipients": [
-        "Chawalit.M@pttgcgroup.com",
-        "Ronpol.P@pttgcgroup.com",
-        "Anuwat.K@pttgcgroup.com",
-        "Prasit.Su@pttgcgroup.com",
-        "Sirilak.S@pttgcgroup.com"
-      ],
-      "subject": "อัปเดตราคาน้ำมันดีเซล B10 และ EV Price ประจำวันที่ 21/10/2026",
-      "b10Price": 43.54,
-      "triggerType": "auto_scheduled_date",
-      "channel": "server_smtp"
-    },
-    "2026-10-22": {
-      "id": "<1616180d-6fd6-9c1c-0480-34fd43b08f5f@gmail.com>",
-      "sentAt": "2026-10-22T01:42:01.384Z",
-      "isoDateBangkok": "2026-10-22",
-      "recipients": [
-        "Chawalit.M@pttgcgroup.com",
-        "Ronpol.P@pttgcgroup.com",
-        "Anuwat.K@pttgcgroup.com",
-        "Prasit.Su@pttgcgroup.com",
-        "Sirilak.S@pttgcgroup.com"
-      ],
-      "subject": "อัปเดตราคาน้ำมันดีเซล B10 และ EV Price ประจำวันที่ 22/10/2026",
-      "b10Price": 43.54,
-      "triggerType": "auto_scheduled_date",
-      "channel": "server_smtp"
-    },
-    "2026-10-23": {
-      "id": "gas_20261023_080000",
-      "sentAt": "2026-10-23T01:00:00.000Z",
-      "isoDateBangkok": "2026-10-23",
-      "recipients": [
-        "Chawalit.M@pttgcgroup.com",
-        "Ronpol.P@pttgcgroup.com",
-        "Anuwat.K@pttgcgroup.com",
-        "Prasit.Su@pttgcgroup.com",
-        "Sirilak.S@pttgcgroup.com"
-      ],
-      "subject": "อัปเดตราคาน้ำมันดีเซล B10 และ EV Price ประจำวันที่ 23/10/2026",
-      "b10Price": 43.54,
-      "triggerType": "auto_scheduled_date",
-      "channel": "server_smtp"
-    },
-    "2026-10-24": {
-      "id": "gas_20261024_080000",
-      "sentAt": "2026-10-24T01:00:00.000Z",
-      "isoDateBangkok": "2026-10-24",
-      "recipients": [
-        "Chawalit.M@pttgcgroup.com",
-        "Ronpol.P@pttgcgroup.com",
-        "Anuwat.K@pttgcgroup.com",
-        "Prasit.Su@pttgcgroup.com",
-        "Sirilak.S@pttgcgroup.com"
-      ],
-      "subject": "อัปเดตราคาน้ำมันดีเซล B10 และ EV Price ประจำวันที่ 24/10/2026",
-      "b10Price": 43.54,
-      "triggerType": "auto_scheduled_date",
-      "channel": "server_smtp"
-    },
-    "2026-10-25": {
-      "id": "gas_1792937112887_80xng",
-      "sentAt": "2026-10-25T14:05:12.664Z",
-      "isoDateBangkok": "2026-10-25",
-      "recipients": [
-        "Chawalit.M@pttgcgroup.com",
-        "Ronpol.P@pttgcgroup.com",
-        "Anuwat.K@pttgcgroup.com",
-        "Prasit.Su@pttgcgroup.com",
-        "Sirilak.S@pttgcgroup.com"
-      ],
-      "subject": "อัปเดตราคาน้ำมันดีเซล B10 และ EV Price ประจำวันที่ 25/10/2026",
-      "b10Price": 43.54,
-      "triggerType": "auto_scheduled_date",
-      "channel": "server_smtp"
-    },
-    "2026-10-26": {
-      "id": "gas_20261026_080000",
-      "sentAt": "2026-10-26T01:00:00.000Z",
-      "isoDateBangkok": "2026-10-26",
-      "recipients": [
-        "Chawalit.M@pttgcgroup.com",
-        "Ronpol.P@pttgcgroup.com",
-        "Anuwat.K@pttgcgroup.com",
-        "Prasit.Su@pttgcgroup.com",
-        "Sirilak.S@pttgcgroup.com"
-      ],
-      "subject": "อัปเดตราคาน้ำมันดีเซล B10 และ EV Price ประจำวันที่ 26/10/2026",
-      "b10Price": 43.54,
-      "triggerType": "auto_scheduled_date",
-      "channel": "server_smtp"
-    }
-  },
-  "lastSentDateBangkok": "2026-10-26",
-  "updatedAt": 1761016000000
+  "sentDateLocks": {},
+  "lastSentDateBangkok": "2026-11-20",
+  "updatedAt": 1900000000124
 }
