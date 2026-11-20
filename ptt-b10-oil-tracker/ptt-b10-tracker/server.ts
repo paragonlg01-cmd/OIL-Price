@@ -171,8 +171,15 @@ export interface SentEmailLog {
   recipients: string[];
   subject: string;
   b10Price: number;
-  triggerType: 'manual' | 'auto_scheduled_date' | 'auto_daily' | 'auto_price_change';
+  triggerType:
+    | 'manual'
+    | 'auto_scheduled_date'
+    | 'auto_daily'
+    | 'auto_price_change'
+    | 'auto_price_revision';
   channel: 'server_smtp' | 'client_gmail';
+  revision?: number;
+  previousPrice?: number;
 }
 
 export interface ServerScheduleStore {
@@ -243,22 +250,30 @@ const DEFAULT_STORE: ServerScheduleStore = {
 };
 
 function deduplicateAndSortSentLogs(logs: SentEmailLog[]): SentEmailLog[] {
-  const byDate = new Map<string, SentEmailLog>();
+  const byKey = new Map<string, SentEmailLog>();
   for (const log of logs) {
     if (!log || !log.isoDateBangkok) continue;
-    const existing = byDate.get(log.isoDateBangkok);
+    const rev = Number(log.revision || 0);
+    const key = `${log.isoDateBangkok}#rev${rev}`;
+    const existing = byKey.get(key);
     if (!existing) {
-      byDate.set(log.isoDateBangkok, log);
+      byKey.set(key, log);
     } else {
       const existingRecipCount = Array.isArray(existing.recipients) ? existing.recipients.length : 0;
       const incomingRecipCount = Array.isArray(log.recipients) ? log.recipients.length : 0;
       if (incomingRecipCount > existingRecipCount) {
-        byDate.set(log.isoDateBangkok, log);
+        byKey.set(key, log);
       }
     }
   }
-  return Array.from(byDate.values())
-    .sort((a, b) => b.isoDateBangkok.localeCompare(a.isoDateBangkok))
+  return Array.from(byKey.values())
+    .sort((a, b) => {
+      const dateCmp = b.isoDateBangkok.localeCompare(a.isoDateBangkok);
+      if (dateCmp !== 0) return dateCmp;
+      const revCmp = Number(b.revision || 0) - Number(a.revision || 0);
+      if (revCmp !== 0) return revCmp;
+      return String(b.sentAt || '').localeCompare(String(a.sentAt || ''));
+    })
     .slice(0, 50);
 }
 
@@ -875,7 +890,8 @@ function buildServerEmailHtml(
   dailySchedule: DailyScheduleItem[],
   effectiveText: string,
   defaultEvPrice: string,
-  customOverrides: Record<string, { b10?: string; ev?: string; forceBlank?: boolean }>
+  customOverrides: Record<string, { b10?: string; ev?: string; forceBlank?: boolean }>,
+  revisionInfo?: { revision: number; previousPrice?: number; newPrice: number }
 ): string {
   const parsedEv = parseFloat(defaultEvPrice);
   const formattedDefaultEv = Number.isNaN(parsedEv) ? '9.60' : parsedEv.toFixed(2);
@@ -915,14 +931,30 @@ function buildServerEmailHtml(
     })
     .join('');
 
+  const revTag =
+    revisionInfo && revisionInfo.revision > 0
+      ? `Rev.${String(revisionInfo.revision).padStart(2, '0')}`
+      : '';
+  const revisionBannerHtml =
+    revisionInfo && revisionInfo.revision > 0
+      ? `<div style="margin-bottom: 12px; padding: 8px 12px; background-color: #FEF3C7; border: 1px solid #F59E0B; border-radius: 6px; font-size: 13px; color: #92400E;">
+    <strong>แจ้งอัปเดตแก้ไขราคาปรับระหว่างวัน (${revTag}):</strong> ราคาน้ำมันดีเซล B10 ปรับเปลี่ยน${
+      typeof revisionInfo.previousPrice === 'number'
+        ? `จาก <strong>${revisionInfo.previousPrice.toFixed(2)}</strong>`
+        : ''
+    } เป็น <strong>${revisionInfo.newPrice.toFixed(2)} บาท/ลิตร</strong>
+  </div>`
+      : '';
+
   return `<!DOCTYPE html>
 <html lang="th">
 <head>
   <meta charset="UTF-8">
 </head>
 <body style="margin: 0; padding: 16px; background-color: #FFFFFF; font-family: Calibri, Arial, sans-serif; color: #0F172A;">
+  ${revisionBannerHtml}
   <div style="margin-bottom: 12px; font-size: 14px; color: #1E293B;">
-    <strong>รายงานอัปเดตราคาน้ำมันดีเซล B10 (Fuel price B10 PTT) และ EV price</strong><br/>
+    <strong>รายงานอัปเดตราคาน้ำมันดีเซล B10 (Fuel price B10 PTT) และ EV price${revTag ? ` (${revTag})` : ''}</strong><br/>
     <span style="font-size: 12px; color: #475569;">ข้อมูลอ้างอิงจาก: <a href="http://www.pttor.com/oilprice-board.aspx" style="color: #1D3C85;">http://www.pttor.com/oilprice-board.aspx</a> (${effectiveText || 'ล่าสุด'})</span>
   </div>
 
@@ -1019,11 +1051,23 @@ function recordPermanentDateLock(isoDateBangkok: string, log: SentEmailLog): voi
 }
 
 function getSentLogForDate(isoDateBangkok: string): SentEmailLog | null {
+  const candidates: SentEmailLog[] = [];
   if (scheduleStore.sentDateLocks && scheduleStore.sentDateLocks[isoDateBangkok]) {
-    return scheduleStore.sentDateLocks[isoDateBangkok];
+    candidates.push(scheduleStore.sentDateLocks[isoDateBangkok]);
   }
-  const found = scheduleStore.sentLogs.find((log) => log.isoDateBangkok === isoDateBangkok);
-  if (found) return found;
+  for (const log of scheduleStore.sentLogs || []) {
+    if (log && log.isoDateBangkok === isoDateBangkok) {
+      candidates.push(log);
+    }
+  }
+  if (candidates.length > 0) {
+    candidates.sort((a, b) => {
+      const revCmp = Number(b.revision || 0) - Number(a.revision || 0);
+      if (revCmp !== 0) return revCmp;
+      return String(b.sentAt || '').localeCompare(String(a.sentAt || ''));
+    });
+    return candidates[0];
+  }
 
   // Check persistent disk locks
   try {
@@ -1072,7 +1116,8 @@ async function sendServerSmtpEmail(
   triggerType: SentEmailLog['triggerType'],
   overrideYear?: number,
   overrideMonth?: number,
-  force: boolean = false
+  force: boolean = false,
+  revisionOptions?: { revision?: number; previousPrice?: number }
 ): Promise<SentEmailLog> {
   if (!isSmtpConfigured()) {
     throw new Error(
@@ -1088,9 +1133,15 @@ async function sendServerSmtpEmail(
   const [tY, tM, tD] = todayIso.split('-');
   const formattedTodayThai = `${tD}/${tM}/${tY}`;
 
-  // Strict Duplicate-Send Prevention: Check if an email was already sent today or is currently in-flight
+  const requestedRevision = Number(revisionOptions?.revision || 0);
   const existingLogToday = getSentLogForDate(todayIso);
-  if (!force && existingLogToday) {
+  const isValidRevisionSend =
+    requestedRevision > 0 &&
+    Boolean(existingLogToday) &&
+    requestedRevision > Number(existingLogToday?.revision || 0);
+
+  // Strict Duplicate-Send Prevention: Block duplicate sends on same day unless forced or a higher Rev.XX revision
+  if (!force && !isValidRevisionSend && existingLogToday) {
     const sentTimeStr = formatTimeBangkok(existingLogToday.sentAt);
     throw new Error(
       `ระบบป้องกันการส่งซ้ำ: วันนี้ (${formattedTodayThai}) มีการส่งอีเมลแจ้งเตือนไปแล้วเมื่อเวลา ${sentTimeStr} น. ระบบจึงล็อกไม่ให้ส่งซ้ำอีกในวันนี้`
@@ -1111,17 +1162,40 @@ async function sendServerSmtpEmail(
 
     const payload = await buildMonthlyB10Payload(targetYear, targetMonth);
 
-    const resolvedSubject = scheduleStore.customSubject
-      .replace('{today}', formattedTodayThai)
-      .replace('{price}', payload.liveBoard.b10Price.toFixed(2))
-      .replace('{month}', String(targetMonth).padStart(2, '0'))
-      .replace('{year}', String(targetYear));
+    // Extra guard for intraday revisions: abort if live price actually matches last sent price
+    if (
+      isValidRevisionSend &&
+      existingLogToday &&
+      Math.abs(payload.liveBoard.b10Price - existingLogToday.b10Price) < 0.005
+    ) {
+      throw new Error(
+        `ราคาน้ำมัน B10 ล่าสุด (${payload.liveBoard.b10Price.toFixed(2)}) เท่ากับราคาที่ส่งไปแล้ว จึงไม่ส่ง Rev.${String(requestedRevision).padStart(2, '0')} ซ้ำ`
+      );
+    }
+
+    const revSuffix =
+      requestedRevision > 0 ? ` (Rev.${String(requestedRevision).padStart(2, '0')})` : '';
+
+    const resolvedSubject =
+      scheduleStore.customSubject
+        .replace('{today}', formattedTodayThai)
+        .replace('{price}', payload.liveBoard.b10Price.toFixed(2))
+        .replace('{month}', String(targetMonth).padStart(2, '0'))
+        .replace('{year}', String(targetYear)) + revSuffix;
 
     const htmlBody = buildServerEmailHtml(
       payload.dailySchedule,
       payload.liveBoard.effectiveText,
       scheduleStore.defaultEvPrice,
-      scheduleStore.customOverrides
+      scheduleStore.customOverrides,
+      requestedRevision > 0
+        ? {
+            revision: requestedRevision,
+            previousPrice:
+              revisionOptions?.previousPrice ?? existingLogToday?.b10Price,
+            newPrice: payload.liveBoard.b10Price,
+          }
+        : undefined
     );
 
     const host = process.env.SMTP_HOST?.trim() || 'smtp.gmail.com';
@@ -1155,14 +1229,21 @@ async function sendServerSmtpEmail(
       b10Price: payload.liveBoard.b10Price,
       triggerType,
       channel: 'server_smtp',
+      ...(requestedRevision > 0
+        ? {
+            revision: requestedRevision,
+            previousPrice: revisionOptions?.previousPrice ?? existingLogToday?.b10Price,
+          }
+        : {}),
     };
 
-    scheduleStore.sentLogs = [newLog, ...scheduleStore.sentLogs].slice(0, 50);
+    scheduleStore.sentLogs = deduplicateAndSortSentLogs([newLog, ...scheduleStore.sentLogs]);
     scheduleStore.sentDateLocks = {
       ...(scheduleStore.sentDateLocks || {}),
       [todayIso]: newLog,
     };
     scheduleStore.lastSentDateBangkok = todayIso;
+    scheduleStore.updatedAt = Math.max((scheduleStore.updatedAt || 0) + 1, Date.now());
     saveScheduleStore(scheduleStore);
     recordPermanentDateLock(todayIso, newLog);
     return newLog;
@@ -1173,18 +1254,21 @@ async function sendServerSmtpEmail(
 
 // 24/7 Server-Side Background Cron Worker
 let isCronRunning = false;
-async function runBackgroundScheduleTick() {
+let lastIntradayRevisionCheckAt = 0;
+
+async function runBackgroundScheduleTick(forceRevisionCheck: boolean = false) {
   if (isCronRunning) return;
   await ensureCloudHydrated();
   if (!scheduleStore.autoEnabled || scheduleStore.recipients.length === 0) return;
   if (!isSmtpConfigured()) return;
 
   const todayIso = getThailandTodayIso();
-
-  // STRICT DUPLICATE GUARD: If ANY email was already sent today (or is in flight or hard-locked), never send again today!
-  if (isDateAlreadySent(todayIso) || inFlightSendDates.has(todayIso)) {
+  if (inFlightSendDates.has(todayIso)) {
     return;
   }
+
+  const alreadySentToday = isDateAlreadySent(todayIso);
+  const existingTodayLog = alreadySentToday ? getSentLogForDate(todayIso) : null;
 
   isCronRunning = true;
   try {
@@ -1206,6 +1290,34 @@ async function runBackgroundScheduleTick() {
     const nowTotalMins = (nowH || 0) * 60 + (nowM || 0);
     const isWithinTriggerWindow =
       nowTotalMins >= schedTotalMins && nowTotalMins <= schedTotalMins + 150;
+
+    // 0. Intraday Price-Revision Auto-Alert (Rev.01, Rev.02, ...) on scheduled send days
+    // If today's morning email was already sent and PTT updates B10 price later the same day, notify immediately with Rev.01/Rev.02...
+    if (alreadySentToday && existingTodayLog) {
+      if (isScheduledDateToday && nowTotalMins >= schedTotalMins) {
+        const nowMs = Date.now();
+        if (forceRevisionCheck || nowMs - lastIntradayRevisionCheckAt >= 5 * 60 * 1000) {
+          lastIntradayRevisionCheckAt = nowMs;
+          const liveBoard = await scrapePttOilPriceBoard();
+          if (
+            liveBoard.b10Price > 10 &&
+            liveBoard.b10Price < 200 &&
+            Math.abs(liveBoard.b10Price - existingTodayLog.b10Price) >= 0.005
+          ) {
+            const nextRevision = Number(existingTodayLog.revision || 0) + 1;
+            const revTag = `Rev.${String(nextRevision).padStart(2, '0')}`;
+            console.log(
+              `[Server Cron] Intraday B10 price revision detected on ${todayIso}: ${existingTodayLog.b10Price} -> ${liveBoard.b10Price}. Sending ${revTag}.`
+            );
+            await sendServerSmtpEmail('auto_price_revision', undefined, undefined, false, {
+              revision: nextRevision,
+              previousPrice: existingTodayLog.b10Price,
+            });
+          }
+        }
+      }
+      return;
+    }
 
     // 1. Specific Dates of Month (01, 10, 20, End of Month)
     if (
@@ -2091,6 +2203,8 @@ async function startServer() {
       b10Price: typeof body.b10Price === 'number' ? body.b10Price : 43.54,
       triggerType: body.triggerType || 'auto_scheduled_date',
       channel: (body.channel as any) || 'server_smtp',
+      ...(typeof body.revision === 'number' && body.revision > 0 ? { revision: body.revision } : {}),
+      ...(typeof body.previousPrice === 'number' ? { previousPrice: body.previousPrice } : {}),
     };
 
     const existingLogs = scheduleStore.sentLogs || [];
@@ -2115,9 +2229,10 @@ async function startServer() {
   });
 
   // 5. External Cron / Google Apps Script Wake-Up & Check Endpoint
-  app.get('/api/cron-wake', async (_req, res) => {
+  app.get('/api/cron-wake', async (req, res) => {
     await ensureCloudHydrated();
-    await runBackgroundScheduleTick();
+    const checkRevision = req.query.checkRevision === '1' || req.query.checkRevision === 'true';
+    await runBackgroundScheduleTick(checkRevision);
     const todayIso = getThailandTodayIso();
     const sentTodayLog = getSentLogForDate(todayIso);
     res.json({
@@ -2125,6 +2240,8 @@ async function startServer() {
       cloudStoreConfigured: Boolean(getCloudStoreUrl()),
       serverTimeBangkok: `${todayIso} ${getThailandNowTime()}`,
       sentToday: Boolean(sentTodayLog),
+      latestRevision: Number(sentTodayLog?.revision || 0),
+      latestB10Price: sentTodayLog?.b10Price ?? null,
       sentTodayLog,
     });
   });
