@@ -180,6 +180,7 @@ export interface SentEmailLog {
   channel: 'server_smtp' | 'client_gmail';
   revision?: number;
   previousPrice?: number;
+  priceEffectiveAt?: string;
 }
 
 export interface ServerScheduleStore {
@@ -1231,16 +1232,30 @@ async function sendServerSmtpEmail(
       todayRow && typeof todayRow.b10Price === 'number'
         ? todayRow.b10Price
         : payload.liveBoard.b10Price;
+    const currentEffectiveAt =
+      todayRow?.effectiveFrom ||
+      `${payload.liveBoard.effectiveIsoDate || todayIso}T${payload.liveBoard.effectiveTime || '05:00'}`;
 
-    // Extra guard for intraday revisions: abort if live price actually matches last sent price
-    if (
-      isValidRevisionSend &&
-      existingLogToday &&
-      Math.abs(currentEffectiveB10Price - existingLogToday.b10Price) < 0.005
-    ) {
-      throw new Error(
-        `ราคาน้ำมัน B10 ล่าสุด (${currentEffectiveB10Price.toFixed(2)}) เท่ากับราคาที่ส่งไปแล้ว จึงไม่ส่ง Rev.${String(requestedRevision).padStart(2, '0')} ซ้ำ`
-      );
+    // Extra guard for intraday revisions: abort if live price actually matches last sent price OR is from an older date/timestamp
+    if (isValidRevisionSend && existingLogToday) {
+      if (Math.abs(currentEffectiveB10Price - existingLogToday.b10Price) < 0.005) {
+        throw new Error(
+          `ราคาน้ำมัน B10 ล่าสุด (${currentEffectiveB10Price.toFixed(2)}) เท่ากับราคาที่ส่งไปแล้ว จึงไม่ส่ง Rev.${String(requestedRevision).padStart(2, '0')} ซ้ำ`
+        );
+      }
+      if (!currentEffectiveAt.startsWith(todayIso)) {
+        throw new Error(
+          `ราคาที่ดึงได้มีวันที่มีผล (${currentEffectiveAt}) ไม่ใช่วันนี้ (${todayIso}) จึงไม่ส่ง Rev.${String(requestedRevision).padStart(2, '0')} เพื่อกันส่งย้อนราคาเก่า`
+        );
+      }
+      if (
+        existingLogToday.priceEffectiveAt &&
+        currentEffectiveAt <= existingLogToday.priceEffectiveAt
+      ) {
+        throw new Error(
+          `เวลาที่มีผลของราคา (${currentEffectiveAt}) ไม่ใหม่กว่ารอบล่าสุด (${existingLogToday.priceEffectiveAt}) จึงไม่ส่ง Rev.${String(requestedRevision).padStart(2, '0')}`
+        );
+      }
     }
 
     const revSuffix =
@@ -1299,6 +1314,7 @@ async function sendServerSmtpEmail(
       b10Price: currentEffectiveB10Price,
       triggerType,
       channel: 'server_smtp',
+      priceEffectiveAt: currentEffectiveAt,
       ...(requestedRevision > 0
         ? {
             revision: requestedRevision,
@@ -1327,6 +1343,14 @@ let isCronRunning = false;
 let lastIntradayRevisionCheckAt = 0;
 
 async function runBackgroundScheduleTick(forceRevisionCheck: boolean = false) {
+  // Run automatic scheduled/revision sends ONLY on the production Render server (prevent dev/preview sandbox from racing with Render!)
+  const isProductionSender = Boolean(
+    process.env.RENDER ||
+      process.env.RENDER_EXTERNAL_URL ||
+      process.env.ENABLE_LOCAL_CRON === 'true'
+  );
+  if (!isProductionSender) return;
+
   if (isCronRunning) return;
   await ensureCloudHydrated();
   if (!scheduleStore.autoEnabled || scheduleStore.recipients.length === 0) return;
@@ -1362,7 +1386,10 @@ async function runBackgroundScheduleTick(forceRevisionCheck: boolean = false) {
       nowTotalMins >= schedTotalMins && nowTotalMins <= schedTotalMins + 150;
 
     // 0. Intraday Price-Revision Auto-Alert (Rev.01, Rev.02, ...) on scheduled send days
-    // Checks BOTH pttor-history AJAX and oilprice-board.aspx so midday adjustments (e.g. 13:00) are caught immediately!
+    // STRICT ANTI-PING-PONG GUARDS:
+    //  a) Checks BOTH pttor-history AJAX and oilprice-board.aspx
+    //  b) Only triggers when the new price's effective date IS TODAY (never from a stale cached yesterday board!)
+    //  c) Only triggers when priceEffectiveAt is strictly newer than the last sent log's priceEffectiveAt
     if (alreadySentToday && existingTodayLog) {
       if (isScheduledDateToday && nowTotalMins >= schedTotalMins) {
         const nowMs = Date.now();
@@ -1374,7 +1401,17 @@ async function runBackgroundScheduleTick(forceRevisionCheck: boolean = false) {
             todayRow && typeof todayRow.b10Price === 'number'
               ? todayRow.b10Price
               : payload.liveBoard.b10Price;
+          const liveEffectiveAt =
+            todayRow?.effectiveFrom ||
+            `${payload.liveBoard.effectiveIsoDate || ''}T${payload.liveBoard.effectiveTime || '05:00'}`;
+          const isEffectiveToday = liveEffectiveAt.startsWith(todayIso);
+          const isNewerTimestamp =
+            !existingTodayLog.priceEffectiveAt ||
+            liveEffectiveAt > existingTodayLog.priceEffectiveAt;
+
           if (
+            isEffectiveToday &&
+            isNewerTimestamp &&
             livePrice > 10 &&
             livePrice < 200 &&
             Math.abs(livePrice - existingTodayLog.b10Price) >= 0.005
@@ -1382,7 +1419,7 @@ async function runBackgroundScheduleTick(forceRevisionCheck: boolean = false) {
             const nextRevision = Number(existingTodayLog.revision || 0) + 1;
             const revTag = `Rev.${String(nextRevision).padStart(2, '0')}`;
             console.log(
-              `[Server Cron] Intraday B10 price revision detected on ${todayIso}: ${existingTodayLog.b10Price} -> ${livePrice}. Sending ${revTag}.`
+              `[Server Cron] Intraday B10 price revision detected on ${todayIso} (${liveEffectiveAt}): ${existingTodayLog.b10Price} -> ${livePrice}. Sending ${revTag}.`
             );
             await sendServerSmtpEmail('auto_price_revision', undefined, undefined, false, {
               revision: nextRevision,
@@ -1537,21 +1574,31 @@ async function syncWithRenderProduction(): Promise<void> {
 
     const remoteTop8Dates = remoteLogs
       .slice(0, 8)
-      .map((l) => `${l?.isoDateBangkok}:${Array.isArray(l?.recipients) ? l.recipients.length : 0}`)
+      .map(
+        (l) =>
+          `${l?.isoDateBangkok}#r${Number(l?.revision || 0)}:${Array.isArray(l?.recipients) ? l.recipients.length : 0}`
+      )
       .join('|');
     const localTop8Dates = scheduleStore.sentLogs
       .slice(0, 8)
-      .map((l) => `${l?.isoDateBangkok}:${Array.isArray(l?.recipients) ? l.recipients.length : 0}`)
+      .map(
+        (l) =>
+          `${l?.isoDateBangkok}#r${Number(l?.revision || 0)}:${Array.isArray(l?.recipients) ? l.recipients.length : 0}`
+      )
       .join('|');
     const renderNeedsLogOrderFix = remoteTop8Dates !== localTop8Dates;
 
     const logsToPushToRender = renderNeedsLogOrderFix
       ? [...scheduleStore.sentLogs]
           .slice(0, 9)
-          .sort((a, b) => a.isoDateBangkok.localeCompare(b.isoDateBangkok))
+          .sort((a, b) => {
+            const cmp = a.isoDateBangkok.localeCompare(b.isoDateBangkok);
+            if (cmp !== 0) return cmp;
+            return Number(a.revision || 0) - Number(b.revision || 0);
+          })
           .map((l) => ({
             ...l,
-            id: `sync_${l.isoDateBangkok.replace(/-/g, '')}_${Date.now()}`,
+            id: l.id || `sync_${l.isoDateBangkok.replace(/-/g, '')}_r${Number(l.revision || 0)}_${Date.now()}`,
           }))
       : [];
 
@@ -2285,6 +2332,9 @@ async function startServer() {
       channel: (body.channel as any) || 'server_smtp',
       ...(typeof body.revision === 'number' && body.revision > 0 ? { revision: body.revision } : {}),
       ...(typeof body.previousPrice === 'number' ? { previousPrice: body.previousPrice } : {}),
+      ...(typeof body.priceEffectiveAt === 'string' && body.priceEffectiveAt
+        ? { priceEffectiveAt: body.priceEffectiveAt }
+        : {}),
     };
 
     const existingLogs = scheduleStore.sentLogs || [];
